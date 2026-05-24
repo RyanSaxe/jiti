@@ -1,5 +1,7 @@
 """`declaration.py` turns a stub into jiti's canonical spec; these tests pin that down."""
 
+from dataclasses import dataclass
+
 import pytest
 
 from jiti.declaration import BodyMode, class_context_of, introspect
@@ -119,3 +121,19 @@ def test_method_declaration_includes_class_context():
     assert declaration.class_context is not None
     assert declaration.class_context.name == "Widget"
     assert declaration.qualname == "Widget.parse"
+
+
+@dataclass
+class Account:
+    balance: int
+
+    def withdraw(self, amount: int) -> int:
+        """Withdraw amount from the balance."""
+        ...
+
+
+def test_class_context_handles_a_dataclass_init():
+    context = introspect(Account.withdraw, owner=Account).class_context
+
+    assert context is not None
+    assert dict(context.attributes)["balance"] == "int"

@@ -179,7 +179,11 @@ def _class_attributes(owner: type) -> tuple[tuple[str, str], ...]:
 
 def _self_assignments(initializer: types.FunctionType) -> dict[str, str]:
     """Find `self.x` (and `self.x: T`) assignments in an `__init__` to learn attributes."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(initializer)))
+    try:
+        source = inspect.getsource(initializer)
+    except (OSError, TypeError):
+        return {}  # synthetic __init__ (e.g. a dataclass) has no source — annotations suffice
+    tree = ast.parse(textwrap.dedent(source))
     found: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
