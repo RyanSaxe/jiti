@@ -218,7 +218,8 @@ def _split_imports(source: str) -> tuple[str, str]:
             imports.append("\n".join(lines[node.lineno - 1 : end]))
             import_lines.update(range(node.lineno, end + 1))
     body = "\n".join(line for number, line in enumerate(lines, 1) if number not in import_lines)
-    return "\n".join(imports), body.strip("\n")
+    body = re.sub(r"\n{3,}", "\n\n", body).strip("\n")  # close the gap where imports were
+    return "\n".join(imports), body
 
 
 def _clean_imports(path: Path) -> None:
