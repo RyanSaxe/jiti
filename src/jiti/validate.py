@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import traceback
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -23,8 +24,9 @@ from typing import NamedTuple, cast
 
 from jiti.errors import JitiError
 
-RUFF = ("ruff",)
-TY = ("ty",)
+# Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
+RUFF = (sys.executable, "-m", "ruff")
+TY = (sys.executable, "-m", "ty")
 
 
 class MethodPatch(NamedTuple):

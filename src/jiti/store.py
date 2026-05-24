@@ -12,6 +12,7 @@ import ast
 import re
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -223,9 +224,23 @@ def _split_imports(source: str) -> tuple[str, str]:
 
 
 def _clean_imports(path: Path) -> None:
-    """Dedupe, merge, sort, and prune the hoisted import block (bodies untouched) via ruff."""
+    """Dedupe, merge, sort, and prune the hoisted import block (bodies untouched) via ruff.
+
+    Invoked through the interpreter so it works without the venv's bin on PATH; a missing
+    ruff degrades to un-deduped imports rather than crashing an already-finished generation.
+    """
     subprocess.run(
-        ["ruff", "check", "--fix", "--select", "F401,I", "--quiet", str(path)],
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--fix",
+            "--select",
+            "F401,I",
+            "--quiet",
+            str(path),
+        ],
         capture_output=True,
     )
 
