@@ -11,8 +11,10 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
+from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.store import Action, JitiStore
@@ -61,22 +63,28 @@ class Engine:
                 f"generation cycle: {key} is needed to generate itself (mutually recursive stubs)."
             )
         self._in_progress.add(key)
+        depth = len(self._in_progress)
+        log_start(key, depth)
+        started = perf_counter()
         try:
             context = CallContext(declaration, args, kwargs, import_path=_import_path(declaration))
-            self._run_agent(declaration, context)
+            total_cost = self._run_agent(declaration, context, depth)
             if context.passing is None:
                 raise GenerationError(
                     f"{key}: the agent finished without an implementation that passes validation."
                 )
             impl, tests = context.passing
             self.store.write(declaration, impl, _committed_tests(declaration, tests))
+            log_done(key, depth, perf_counter() - started, total_cost)
         finally:
             self._in_progress.discard(key)
 
-    def _run_agent(self, declaration: Declaration, context: CallContext) -> None:
+    def _run_agent(self, declaration: Declaration, context: CallContext, depth: int) -> float:
         system = [{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}]
         messages: list[dict[str, Any]] = [{"role": "user", "content": _task_prompt(declaration)}]
-        for _ in range(self.max_turns):
+        total_cost = 0.0
+        for turn in range(1, self.max_turns + 1):
+            started = perf_counter()
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -84,13 +92,17 @@ class Engine:
                 tools=TOOL_SCHEMAS,
                 messages=messages,
             )
+            usage = getattr(response, "usage", None)
+            log_llm_call(declaration.key, turn, depth, perf_counter() - started, usage, self.model)
+            total_cost += cost(self.model, usage) or 0.0
             messages.append({"role": "assistant", "content": response.content})
             tool_uses = [block for block in response.content if _is_tool_use(block)]
             if not tool_uses:
-                return
+                return total_cost
             messages.append(
                 {"role": "user", "content": [_tool_result(context, block) for block in tool_uses]}
             )
+        return total_cost
 
 
 def _is_tool_use(block: Any) -> bool:

@@ -7,6 +7,7 @@ it under `.jiti/`. Every call after that runs that committed code.
 
 from pathlib import Path
 
+from jiti._log import configure
 from jiti.decorator import jiti
 from jiti.engine import Engine
 from jiti.errors import (
@@ -17,6 +18,8 @@ from jiti.errors import (
     RealBodyError,
 )
 from jiti.store import JitiStore
+
+configure()
 
 __all__ = [
     "ConflictError",

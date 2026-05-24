@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jiti._log import logger
 from jiti.declaration import Declaration
 from jiti.errors import JitiError
 from jiti.validate import MethodPatch, cap, validate
@@ -165,6 +166,7 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
     handler = getattr(context, name, None)
     if name.startswith("_") or not callable(handler):
         return f"unknown tool: {name}"
+    logger.debug("  tool %s", name)
     try:
         return str(handler(**tool_input))
     except JitiError:
