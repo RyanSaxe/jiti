@@ -208,4 +208,5 @@ Rules:
 any PRIVATE helpers (prefix them `_<name>__`).
 - Write named `test_*` functions covering real behavior and edge cases; the task says how to \
 call the target.
+- Do not emit `from __future__` imports.
 - Assume the function is pure (no side effects)."""
