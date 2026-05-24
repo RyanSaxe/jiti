@@ -18,6 +18,7 @@ from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.store import Action, JitiStore
+from jiti.style import resolve_style
 from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 
 DEFAULT_MODEL = "claude-opus-4-7"
@@ -39,6 +40,7 @@ class Engine:
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_turns: int = DEFAULT_MAX_TURNS
+    style: str = field(default_factory=resolve_style)
     _in_progress: set[str] = field(default_factory=set)
 
     def implement(
@@ -80,7 +82,7 @@ class Engine:
             self._in_progress.discard(key)
 
     def _run_agent(self, declaration: Declaration, context: CallContext, depth: int) -> float:
-        system = [{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        system = self._system_blocks()
         messages: list[dict[str, Any]] = [{"role": "user", "content": _task_prompt(declaration)}]
         total_cost = 0.0
         for turn in range(1, self.max_turns + 1):
@@ -103,6 +105,15 @@ class Engine:
                 {"role": "user", "content": [_tool_result(context, block) for block in tool_uses]}
             )
         return total_cost
+
+    def _system_blocks(self) -> list[dict[str, Any]]:
+        # The house style is a separate cached block so jiti's mechanical rules stay cacheable
+        # independent of whichever style guide is in effect.
+        blocks = [{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        if self.style.strip():
+            framed = f"Follow this house style in the code you write:\n\n{self.style}"
+            blocks.append({"type": "text", "text": framed, "cache_control": {"type": "ephemeral"}})
+        return blocks
 
 
 def _is_tool_use(block: Any) -> bool:
