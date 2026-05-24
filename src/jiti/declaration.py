@@ -135,11 +135,16 @@ def _body_without_docstring(node: ast.FunctionDef | ast.AsyncFunctionDef) -> lis
 def _is_placeholder(statement: ast.stmt) -> bool:
     if isinstance(statement, ast.Pass):
         return True
-    return (
-        isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Constant)
-        and statement.value.value is Ellipsis
-    )
+    if isinstance(statement, ast.Expr):
+        return isinstance(statement.value, ast.Constant) and statement.value.value is Ellipsis
+    if isinstance(statement, ast.Raise):
+        return _raises_not_implemented(statement)
+    return False
+
+
+def _raises_not_implemented(node: ast.Raise) -> bool:
+    exception = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+    return isinstance(exception, ast.Name) and exception.id == "NotImplementedError"
 
 
 def _extract_comments(source: str) -> str | None:

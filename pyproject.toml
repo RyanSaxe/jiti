@@ -31,5 +31,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C901"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ty.rules]
+# jiti stubs intentionally have empty bodies with non-None return types — that is the
+# whole point. Disable ty's empty-body rule so stubs (and our stub fixtures) type-check.
+empty-body = "ignore"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

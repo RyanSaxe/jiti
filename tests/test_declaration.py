@@ -23,6 +23,11 @@ def stub_pass() -> None:
     pass
 
 
+def stub_raises(x: int) -> int:
+    """Increment x."""
+    raise NotImplementedError
+
+
 def stub_with_real_body(x: int) -> int:
     return x + 1
 
@@ -38,11 +43,16 @@ def test_comments_in_stub_become_a_generation_hint():
     declaration = introspect(stub_hinted)
 
     assert declaration.body_mode is BodyMode.HINT
+    assert declaration.hint is not None
     assert "lowercase" in declaration.hint
 
 
 def test_pass_body_is_a_stub():
     assert introspect(stub_pass).body_mode is BodyMode.GENERATE
+
+
+def test_raise_not_implemented_is_a_stub():
+    assert introspect(stub_raises).body_mode is BodyMode.GENERATE
 
 
 def test_real_body_is_rejected():
