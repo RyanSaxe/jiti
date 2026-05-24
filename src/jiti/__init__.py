@@ -5,13 +5,7 @@ cache a real implementation you can read, edit, and own.
 """
 
 from jiti.decorator import jiti
-from jiti.errors import (
-    ConflictError,
-    GenerationError,
-    JitiError,
-    RealBodyError,
-    SignatureDivergenceError,
-)
+from jiti.errors import ConflictError, GenerationError, JitiError, RealBodyError
 from jiti.model import AnthropicModel, Model
 from jiti.strategy import Codegen, Strategy
 
@@ -23,7 +17,6 @@ __all__ = [
     "JitiError",
     "Model",
     "RealBodyError",
-    "SignatureDivergenceError",
     "Strategy",
     "jiti",
 ]

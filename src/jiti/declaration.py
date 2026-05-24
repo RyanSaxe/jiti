@@ -17,7 +17,6 @@ import tokenize
 import types
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 from jiti.errors import JitiError, RealBodyError
 
@@ -198,10 +197,15 @@ def _is_self(node: ast.Attribute) -> bool:
     return isinstance(node.value, ast.Name) and node.value.id == "self"
 
 
-def _type_str(annotation: Any) -> str:
+def _type_str(annotation: object) -> str:
     if isinstance(annotation, str):
         return annotation
     return getattr(annotation, "__name__", None) or str(annotation)
+
+
+def short_hash(text: str) -> str:
+    """16 hex chars of SHA-256 — the shared primitive for spec and section hashing."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def _spec_hash(declaration: Declaration) -> str:
@@ -215,5 +219,4 @@ def _spec_hash(declaration: Declaration) -> str:
         parts.append(declaration.class_context.name)
         parts.extend(f"{name}:{type_}" for name, type_ in declaration.class_context.attributes)
         parts.extend(f"{name}{sig}" for name, sig in declaration.class_context.methods)
-    blob = "\x00".join(parts)
-    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+    return short_hash("\x00".join(parts))

@@ -76,7 +76,6 @@ def validate(
 
 def _format(impl_file: Path) -> str:
     workdir = impl_file.parent
-    _run(RUFF, ["format", str(impl_file)], workdir, ())
     _run(RUFF, ["check", "--fix", str(impl_file)], workdir, ())
     _run(RUFF, ["format", str(impl_file)], workdir, ())
     return impl_file.read_text()

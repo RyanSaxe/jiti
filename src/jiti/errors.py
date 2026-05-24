@@ -14,10 +14,6 @@ class RealBodyError(JitiError):
     """
 
 
-class SignatureDivergenceError(JitiError):
-    """A generated implementation's public signature no longer matches its declaration."""
-
-
 class GenerationError(JitiError):
     """The repair loop failed to produce an implementation that passes validation."""
 

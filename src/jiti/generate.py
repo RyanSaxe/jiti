@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from jiti.declaration import BodyMode, ClassContext, Declaration
+from jiti.declaration import ClassContext, Declaration
 from jiti.errors import GenerationError
 from jiti.model import Model
 from jiti.validate import validate
@@ -128,7 +128,7 @@ def _spec_section(declaration: Declaration) -> str:
     ]
     if declaration.docstring:
         lines.append(f"Description: {declaration.docstring}")
-    if declaration.body_mode is BodyMode.HINT and declaration.hint:
+    if declaration.hint:
         lines.append(f"Implementation hint from the author:\n{declaration.hint}")
     if declaration.class_context:
         lines.append(_class_section(declaration.class_context))
