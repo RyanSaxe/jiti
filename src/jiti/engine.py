@@ -101,9 +101,10 @@ class Engine:
             tool_uses = [block for block in response.content if _is_tool_use(block)]
             if not tool_uses:
                 return total_cost
-            messages.append(
-                {"role": "user", "content": [_tool_result(context, block) for block in tool_uses]}
-            )
+            results = [_tool_result(context, block) for block in tool_uses]
+            if context.passing is not None:
+                return total_cost  # a submit just passed — skip the model's wrap-up round-trip
+            messages.append({"role": "user", "content": results})
         return total_cost
 
     def _system_blocks(self) -> list[dict[str, Any]]:

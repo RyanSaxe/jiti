@@ -52,10 +52,6 @@ def submit(name: str, impl: str, tests: str) -> Response:
     return Response(content=[use])
 
 
-def done() -> Response:
-    return Response(content=[Block(type="text", text="done")])
-
-
 GOOD_IMPL = "def slugify(text):\n    return text.lower().replace(' ', '-')"
 BAD_IMPL = "def slugify(text):\n    return text.upper()"
 TESTS = "def test_slug():\n    assert slugify('Hello World') == 'hello-world'"
@@ -67,25 +63,25 @@ def slugify(text: str) -> str:
 
 
 def test_generates_commits_and_caches(tmp_path):
-    client = ScriptedClient([submit("slugify", GOOD_IMPL, TESTS), done()])
+    client = ScriptedClient([submit("slugify", GOOD_IMPL, TESTS)])
     engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))
 
     assert jiti(engine=engine)(slugify)("Hello World") == "hello-world"
-    assert client.calls == 2
+    assert client.calls == 1  # stops on the passing submit — no wrap-up turn
 
     fresh = jiti(engine=engine)(slugify)
     assert fresh("Hi There") == "hi-there"
-    assert client.calls == 2  # cache hit — no new generation
+    assert client.calls == 1  # cache hit — no new generation
 
 
 def test_retries_until_validation_passes(tmp_path):
     client = ScriptedClient(
-        [submit("slugify", BAD_IMPL, TESTS), submit("slugify", GOOD_IMPL, TESTS), done()]
+        [submit("slugify", BAD_IMPL, TESTS), submit("slugify", GOOD_IMPL, TESTS)]
     )
     engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))
 
     assert jiti(engine=engine)(slugify)("Hello World") == "hello-world"
-    assert client.calls == 3
+    assert client.calls == 2
 
 
 def test_cycle_guard_raises(tmp_path):
@@ -125,13 +121,11 @@ def test_cascade_generates_the_callee():
     norm_tests = "def test_n():\n    assert casc_normalize('Hi') == 'hi'"
     _CASCADE_CLIENT.script = [
         submit("casc_slugify", slug_impl, slug_tests),
-        submit("casc_normalize", norm_impl, norm_tests),
-        done(),  # normalize finishes (nested)
-        done(),  # slugify finishes
+        submit("casc_normalize", norm_impl, norm_tests),  # nested, during slugify's test run
     ]
 
     assert casc_slugify("Hello World") == "hello-world"
-    assert _CASCADE_CLIENT.calls == 4
+    assert _CASCADE_CLIENT.calls == 2
 
 
 _METHOD_CLIENT = ScriptedClient([])
@@ -153,7 +147,7 @@ def test_method_generation():
     tests = (
         f"from {__name__} import Counter\n\ndef test_add():\n    assert Counter(10).add(5) == 15"
     )
-    _METHOD_CLIENT.script = [submit("add", impl, tests), done()]
+    _METHOD_CLIENT.script = [submit("add", impl, tests)]
 
     assert Counter(10).add(5) == 15
-    assert _METHOD_CLIENT.calls == 2
+    assert _METHOD_CLIENT.calls == 1
