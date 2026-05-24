@@ -1,0 +1,35 @@
+[project]
+name = "jiti"
+version = "0.1.0"
+description = "Just In Time Implementation: declare a typed function or method by its interface and let an LLM write, validate, and cache a real implementation."
+readme = "README.md"
+authors = [
+    { name = "Ryan Saxe", email = "ryancsaxe+1@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.14",
+    "ty>=0.0.39",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
