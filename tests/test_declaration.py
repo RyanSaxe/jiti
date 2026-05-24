@@ -137,3 +137,14 @@ def test_class_context_handles_a_dataclass_init():
 
     assert context is not None
     assert dict(context.attributes)["balance"] == "int"
+
+
+def stub_forward(x: "list[str]") -> "list[str]":
+    """Stringized (quoted) annotations."""
+    ...
+
+
+def test_signature_resolves_stringized_annotations():
+    # The resolved signature is what the prompt shows (and what callers str), so quoted
+    # forward-ref annotations come through as real types, not as `'list[str]'`.
+    assert str(introspect(stub_forward).signature) == "(x: list[str]) -> list[str]"

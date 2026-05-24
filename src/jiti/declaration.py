@@ -92,6 +92,10 @@ def introspect(func: types.FunctionType, owner: type | None = None) -> Declarati
 def _signature(func: types.FunctionType) -> inspect.Signature:
     # eval_str resolves stringized annotations (from `from __future__ import annotations` or
     # quoted forward refs) to real types, so the prompt shows `list[str]`, not `'list[str]'`.
+    # This resolved signature also feeds the spec hash. Accepted edge: for a stub using such
+    # annotations, a change in an annotation's *resolvability* (e.g. adding the import it refers
+    # to) can shift the hash and cause one regeneration. Ordinary stubs use real annotations, so
+    # eval is a no-op and the hash is stable.
     try:
         return inspect.signature(func, eval_str=True)
     except (NameError, TypeError, AttributeError):
