@@ -11,3 +11,6 @@ wheels/
 
 # jiti-generated code (commit this in real projects; ignored here so the demo stays clean)
 .jiti/
+
+# environment variables file
+.env
