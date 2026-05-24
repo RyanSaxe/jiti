@@ -21,9 +21,7 @@ from typing import Any
 
 from jiti.declaration import Declaration
 from jiti.errors import JitiError
-from jiti.validate import validate
-
-_MAX = 4000
+from jiti.validate import MethodPatch, cap, validate
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
@@ -104,20 +102,20 @@ class CallContext:
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
-        return f"{type(value).__name__}: {_cap(repr(value))}"
+        return f"{type(value).__name__}: {cap(repr(value))}"
 
     def run_python(self, code: str) -> str:
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             exec(code, self._experiment_namespace())
-        return _cap(buffer.getvalue()) or "(no output)"
+        return cap(buffer.getvalue()) or "(no output)"
 
     def read_file(self, path: str) -> str:
         target = Path(path).resolve()
         root = Path.cwd().resolve()
         if target != root and root not in target.parents:
             return f"refused: {path} is outside the project root"
-        return _cap(target.read_text())
+        return cap(target.read_text())
 
     def grep(self, pattern: str) -> str:
         try:
@@ -128,12 +126,12 @@ class CallContext:
             ).stdout
         except FileNotFoundError:
             found = _python_grep(pattern)
-        return _cap(found) or "(no matches)"
+        return cap(found) or "(no matches)"
 
     def submit(self, impl: str, tests: str) -> str:
         patch = None
         if self.declaration.class_context is not None:
-            patch = (self.declaration.class_context.name, self.declaration.name)
+            patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
         result = validate(impl, tests, import_path=self.import_path, patch=patch)
         if result.ok:
             self.passing = (result.impl_source, tests)
@@ -172,7 +170,7 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
     except JitiError:
         raise  # let jiti's own control-flow errors (e.g. generation cycles) propagate
     except Exception:
-        return _cap(traceback.format_exc())
+        return cap(traceback.format_exc())
 
 
 def _python_grep(pattern: str) -> str:
@@ -183,7 +181,3 @@ def _python_grep(pattern: str) -> str:
             if regex.search(line):
                 lines.append(f"{path}:{number}:{line}")
     return "\n".join(lines)
-
-
-def _cap(text: str) -> str:
-    return text if len(text) <= _MAX else text[:_MAX] + "\n… (truncated)"

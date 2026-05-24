@@ -19,13 +19,19 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import NamedTuple, cast
 
 from jiti.errors import JitiError
 
 RUFF = ("ruff",)
 TY = ("ty",)
-_MAX_OUTPUT = 4000
+
+
+class MethodPatch(NamedTuple):
+    """The class and method to temporarily bind a candidate onto during method validation."""
+
+    class_name: str
+    method: str
 
 
 @dataclass(frozen=True)
@@ -59,7 +65,7 @@ def validate(
     test_source: str,
     *,
     import_path: Sequence[str] = (),
-    patch: tuple[str, str] | None = None,
+    patch: MethodPatch | None = None,
 ) -> ValidationResult:
     """Lint, type-check, and run a candidate's tests; return checks and the formatted source.
 
@@ -80,31 +86,29 @@ def validate(
     return ValidationResult(checks=checks, impl_source=formatted)
 
 
-def _run_tests(impl_source: str, test_source: str, patch: tuple[str, str] | None) -> Check:
+def _run_tests(impl_source: str, test_source: str, patch: MethodPatch | None) -> Check:
     namespace: dict[str, object] = {}
     try:
         exec(compile(impl_source, "<jiti-candidate>", "exec"), namespace)
         exec(compile(test_source, "<jiti-candidate-tests>", "exec"), namespace)
     except Exception:
-        return Check("tests", ok=False, output=_cap(traceback.format_exc()))
+        return Check("tests", ok=False, output=cap(traceback.format_exc()))
     with _candidate_method(namespace, patch):
         return _call_tests(namespace)
 
 
 @contextmanager
-def _candidate_method(
-    namespace: dict[str, object], patch: tuple[str, str] | None
-) -> Iterator[None]:
+def _candidate_method(namespace: dict[str, object], patch: MethodPatch | None) -> Iterator[None]:
     """Bind the candidate onto the authored class for the test run, then restore it.
 
     Generation is synchronous (the real call is suspended), so this mutation is invisible
     and always undone — `obj.method(...)` in the tests reaches the candidate, not the stub.
     """
-    cls = namespace.get(patch[0]) if patch else None
-    if patch is None or not isinstance(cls, type) or patch[1] not in namespace:
+    cls = namespace.get(patch.class_name) if patch else None
+    if patch is None or not isinstance(cls, type) or patch.method not in namespace:
         yield
         return
-    method = patch[1]
+    method = patch.method
     missing = object()
     original = cls.__dict__.get(method, missing)
     setattr(cls, method, namespace[method])
@@ -132,7 +136,7 @@ def _call_tests(namespace: dict[str, object]) -> Check:
             failures.append(f"{name}:\n{traceback.format_exc()}")
     if not ran_any:
         return Check("tests", ok=False, output="no test_* functions were defined")
-    return Check("tests", ok=not failures, output=_cap("\n\n".join(failures)))
+    return Check("tests", ok=not failures, output=cap("\n\n".join(failures)))
 
 
 def _format(impl_file: Path) -> str:
@@ -146,7 +150,7 @@ def _lint(
     name: str, tool: Sequence[str], args: list[str], workdir: Path, import_path: Sequence[str]
 ) -> Check:
     code, output = _run(tool, args, workdir, import_path)
-    return Check(name=name, ok=code == 0, output=_cap(output))
+    return Check(name=name, ok=code == 0, output=cap(output))
 
 
 def _run(
@@ -161,7 +165,6 @@ def _run(
     return process.returncode, process.stdout + process.stderr
 
 
-def _cap(text: str) -> str:
-    if len(text) <= _MAX_OUTPUT:
-        return text
-    return text[:_MAX_OUTPUT] + "\n… (truncated)"
+def cap(text: str, limit: int = 4000) -> str:
+    """Truncate long tool/check output so it can't blow up the agent's context."""
+    return text if len(text) <= limit else text[:limit] + "\n… (truncated)"

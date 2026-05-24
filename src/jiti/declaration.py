@@ -52,10 +52,13 @@ class Declaration:
     name: str
     signature: inspect.Signature
     docstring: str | None
-    body_mode: BodyMode
     hint: str | None
     available_symbols: tuple[str, ...]
     class_context: ClassContext | None
+
+    @property
+    def body_mode(self) -> BodyMode:
+        return BodyMode.HINT if self.hint else BodyMode.GENERATE
 
     @property
     def key(self) -> str:
@@ -73,7 +76,6 @@ def introspect(func: types.FunctionType, owner: type | None = None) -> Declarati
 
     Raises `RealBodyError` if the stub already has a real implementation.
     """
-    body_mode, hint = analyze_body(func)
     class_context = class_context_of(owner, exclude=func.__name__) if owner else None
     return Declaration(
         module=func.__module__,
@@ -81,15 +83,14 @@ def introspect(func: types.FunctionType, owner: type | None = None) -> Declarati
         name=func.__name__,
         signature=inspect.signature(func),
         docstring=inspect.getdoc(func),
-        body_mode=body_mode,
-        hint=hint,
+        hint=analyze_body(func),
         available_symbols=_module_symbols(func),
         class_context=class_context,
     )
 
 
-def analyze_body(func: types.FunctionType) -> tuple[BodyMode, str | None]:
-    """Classify a stub body as generate-from-scratch or hinted, or reject a real body."""
+def analyze_body(func: types.FunctionType) -> str | None:
+    """Return the stub's comment hint (or None), rejecting a body with real statements."""
     source = textwrap.dedent(inspect.getsource(func))
     node = _function_node(source, func.__name__)
     body = _body_without_docstring(node)
@@ -98,8 +99,7 @@ def analyze_body(func: types.FunctionType) -> tuple[BodyMode, str | None]:
             f"{func.__qualname__} has an implementation; remove @jiti or reduce its "
             "body to a stub (docstring/comments and `...`)."
         )
-    hint = _extract_comments(source)
-    return (BodyMode.HINT if hint else BodyMode.GENERATE), hint
+    return _extract_comments(source)
 
 
 def class_context_of(owner: type, exclude: str) -> ClassContext:

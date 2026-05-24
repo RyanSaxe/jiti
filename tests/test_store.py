@@ -4,7 +4,7 @@ import inspect
 
 import pytest
 
-from jiti.declaration import BodyMode, Declaration
+from jiti.declaration import Declaration
 from jiti.store import Action, JitiStore
 
 
@@ -15,7 +15,6 @@ def make_declaration(*, module="app.text", qualname="slugify", docstring="doc") 
         name=qualname.split(".")[-1],
         signature=inspect.Signature(),
         docstring=docstring,
-        body_mode=BodyMode.GENERATE,
         hint=None,
         available_symbols=(),
         class_context=None,
