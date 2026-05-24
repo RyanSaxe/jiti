@@ -127,6 +127,28 @@ def slugify(text: str) -> str:
 
 Clear the cache with `jiti.clear()` (or just delete `.jiti/`).
 
+## Concurrency
+
+Two regimes, and the distinction is everything:
+
+- **Running generated code is fully concurrency-safe.** Once a function is generated, calling
+  it is plain in-memory dispatch — no shared state, no I/O, no locks. Call cached `@jiti`
+  functions from as many threads or processes as you like.
+- **Generating is not built for concurrent cold starts.** First-call generation does an LLM
+  round-trip and writes the `.jiti/` companion; jiti does **no locking** there by design.
+
+So the rule is simple: **warm the cache once, single-threaded, then parallelize.** Generate
+(run the code or your test suite) on one process, commit `.jiti/`, and every later run —
+however parallel — is a pure cache hit. It's the same committed-cache workflow that lets
+production run without an API key.
+
+If you *do* let several processes cold-start the same module at once (e.g. `pytest -n auto` on
+a fresh checkout), the one real hazard would be a torn companion file. jiti closes that:
+**every write is atomic** (temp file + rename), so a reader always sees a complete file — old
+or new, never half-written. The worst that remains is benign: a duplicate LLM call, or a
+section that simply regenerates next run. jiti deliberately stops here rather than taking on
+cross-process locks, which add real complexity to avoid a cost this workflow already sidesteps.
+
 ## Status
 
 Early and evolving. Supported today: free functions **and instance methods**, lazy
