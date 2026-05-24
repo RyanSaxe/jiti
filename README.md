@@ -62,6 +62,25 @@ written should not be decorated.
 > stub, not anything jiti does. If it bothers you, disable the `empty-body` rule or use
 > `raise NotImplementedError` as the body.
 
+## Methods
+
+Write the class skeleton yourself and decorate only the methods you want generated; the
+implementation may use `self`:
+
+```python
+@dataclass
+class Cart:
+    prices: list[float]
+    tax_rate: float
+
+    @jiti
+    def total(self) -> float:
+        """Sum the prices and apply tax_rate, rounded to 2 decimals."""
+        ...
+```
+
+`cart.total()` binds and type-checks like any method.
+
 ## How it works
 
 - **An in-process agent writes it.** At the call site, Claude gets tools to `inspect` the
@@ -110,8 +129,9 @@ Clear the cache with `jiti.clear()` (or just delete `.jiti/`).
 
 ## Status
 
-Early and evolving. Supported today: free functions, lazy first-call **agentic** generation
-(inspect real values, explore, experiment, test), in-process validation with cascading
-generation, the edit/conflict lifecycle, and Anthropic. Scoped to **pure functions**. Not
-yet: method generation (the next step), whole-class generation, multiple providers,
-dependency-aware invalidation, and a `jiti eject` command.
+Early and evolving. Supported today: free functions **and instance methods**, lazy
+first-call **agentic** generation (inspect real values, explore, experiment, test),
+in-process validation with cascading generation, the edit/conflict lifecycle, and Anthropic.
+Scoped to **pure functions**. Not yet: whole-class generation, multiple providers,
+dependency-aware invalidation (changing a callee won't re-check callers), and a `jiti eject`
+command.
