@@ -127,6 +127,20 @@ def slugify(text: str) -> str:
 
 Clear the cache with `jiti.clear()` (or just delete `.jiti/`).
 
+### Code style
+
+jiti feeds a **style guide** into the generation prompt so the code it writes matches your
+conventions. A concise default ships with jiti; override it from whichever layer fits, highest
+precedence first:
+
+1. `Engine(style=...)` — pass the guide text explicitly.
+2. `JITI_STYLE=/path/to/style.md` — point the env var at a file (matches `JITI_LOG`).
+3. `jiti.style.md` in your project root — commit it to share a house style with no config.
+4. jiti's bundled default — used when none of the above is set.
+
+The guide is plain prose/Markdown; write it the way you'd brief a new teammate ("prefer guard
+clauses", "don't add defensive checks the types already guarantee").
+
 ## Concurrency
 
 Two regimes, and the distinction is everything:
