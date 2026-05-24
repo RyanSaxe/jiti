@@ -131,7 +131,10 @@ class CallContext:
         return _cap(found) or "(no matches)"
 
     def submit(self, impl: str, tests: str) -> str:
-        result = validate(impl, tests, import_path=self.import_path)
+        patch = None
+        if self.declaration.class_context is not None:
+            patch = (self.declaration.class_context.name, self.declaration.name)
+        result = validate(impl, tests, import_path=self.import_path, patch=patch)
         if result.ok:
             self.passing = (result.impl_source, tests)
             return "PASSED — ruff, ty, and tests are all green."

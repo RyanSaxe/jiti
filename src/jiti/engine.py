@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from jiti.declaration import Declaration
-from jiti.errors import ConflictError, GenerationCycleError, GenerationError, JitiError
+from jiti.declaration import ClassContext, Declaration
+from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.store import Action, JitiStore
 from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 
@@ -55,11 +55,6 @@ class Engine:
     def _generate(
         self, declaration: Declaration, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> None:
-        if declaration.class_context is not None:
-            raise JitiError(
-                f"{declaration.key}: the agentic engine generates free functions only for now; "
-                "method support is the next step."
-            )
         key = declaration.key
         if key in self._in_progress:
             raise GenerationCycleError(
@@ -124,6 +119,10 @@ _DEFAULT: Engine | None = None
 
 
 def _committed_tests(declaration: Declaration, tests: str) -> str:
+    # A method's tests already import the class and call `obj.method(...)`; a free function's
+    # tests use the bare name, so they need the import prepended for standalone pytest runs.
+    if declaration.class_context is not None:
+        return tests
     return f"from {declaration.module} import {declaration.name}\n\n{tests}"
 
 
@@ -146,13 +145,39 @@ def _task_prompt(declaration: Declaration) -> str:
         lines.append(f"Description: {declaration.docstring}")
     if declaration.hint:
         lines.append(f"Author hint:\n{declaration.hint}")
+    if declaration.class_context is not None:
+        lines.append(_class_section(declaration.class_context))
     symbols = ", ".join(declaration.available_symbols) or "(none)"
     lines.append(
         f"You may import these module-level symbols from `{declaration.module}`: {symbols}"
     )
     lines.append("")
+    lines.extend(_test_instruction(declaration))
     lines.append("Inspect the real arguments first, then implement and submit until it passes.")
     return "\n".join(lines)
+
+
+def _class_section(context: ClassContext) -> str:
+    attributes = "\n".join(f"  - self.{n}: {t or 'unknown'}" for n, t in context.attributes)
+    methods = "\n".join(f"  - self.{n}{sig}" for n, sig in context.methods)
+    return (
+        f"This is a method of class {context.name}; the first parameter is the instance.\n"
+        f"Instance attributes:\n{attributes or '  (none)'}\n"
+        f"Sibling methods:\n{methods or '  (none)'}"
+    )
+
+
+def _test_instruction(declaration: Declaration) -> list[str]:
+    if declaration.class_context is not None:
+        cls = declaration.class_context.name
+        return [
+            f"Tests must `from {declaration.module} import {cls}`, build an instance, and call",
+            f"the method on it: `obj = {cls}(...); obj.{declaration.name}(...)`.",
+        ]
+    return [
+        f"Tests are named test_* functions that call `{declaration.name}` by its BARE name",
+        "(it shares their namespace during validation; do not import it).",
+    ]
 
 
 _SYSTEM = """You are jiti's code-generation agent. You implement ONE Python function from \
@@ -169,6 +194,6 @@ Rules:
 - Write real, idiomatic, correct Python.
 - The implementation must define exactly the target function with the given signature, plus \
 any PRIVATE helpers (prefix them `_<name>__`).
-- Tests are named `test_*` functions that call the target by its BARE name — do not import \
-it; it shares their namespace during validation. Cover real behavior and edge cases.
+- Write named `test_*` functions covering real behavior and edge cases; the task says how to \
+call the target.
 - Assume the function is pure (no side effects)."""

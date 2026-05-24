@@ -132,3 +132,28 @@ def test_cascade_generates_the_callee():
 
     assert casc_slugify("Hello World") == "hello-world"
     assert _CASCADE_CLIENT.calls == 4
+
+
+_METHOD_CLIENT = ScriptedClient([])
+_METHOD_ENGINE = Engine(client=_METHOD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+
+
+class Counter:
+    def __init__(self, base: int) -> None:
+        self.base = base
+
+    @jiti(engine=_METHOD_ENGINE)
+    def add(self, n: int) -> int:
+        """Add n to the base."""
+        ...
+
+
+def test_method_generation():
+    impl = "def add(self, n):\n    return self.base + n"
+    tests = (
+        f"from {__name__} import Counter\n\ndef test_add():\n    assert Counter(10).add(5) == 15"
+    )
+    _METHOD_CLIENT.script = [submit("add", impl, tests), done()]
+
+    assert Counter(10).add(5) == 15
+    assert _METHOD_CLIENT.calls == 2

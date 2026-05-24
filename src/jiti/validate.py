@@ -14,7 +14,8 @@ from __future__ import annotations
 import os
 import subprocess
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -58,10 +59,13 @@ def validate(
     test_source: str,
     *,
     import_path: Sequence[str] = (),
+    patch: tuple[str, str] | None = None,
 ) -> ValidationResult:
     """Lint, type-check, and run a candidate's tests; return checks and the formatted source.
 
-    `test_source` references the function by bare name — impl and tests share one namespace.
+    For a free function, `test_source` calls it by bare name (impl and tests share one
+    namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
+    onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
     """
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -71,19 +75,49 @@ def validate(
         checks = (
             _lint("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
-            _run_tests(formatted, test_source),
+            _run_tests(formatted, test_source, patch),
         )
     return ValidationResult(checks=checks, impl_source=formatted)
 
 
-def _run_tests(impl_source: str, test_source: str) -> Check:
+def _run_tests(impl_source: str, test_source: str, patch: tuple[str, str] | None) -> Check:
     namespace: dict[str, object] = {}
     try:
         exec(compile(impl_source, "<jiti-candidate>", "exec"), namespace)
         exec(compile(test_source, "<jiti-candidate-tests>", "exec"), namespace)
     except Exception:
         return Check("tests", ok=False, output=_cap(traceback.format_exc()))
+    with _candidate_method(namespace, patch):
+        return _call_tests(namespace)
 
+
+@contextmanager
+def _candidate_method(
+    namespace: dict[str, object], patch: tuple[str, str] | None
+) -> Iterator[None]:
+    """Bind the candidate onto the authored class for the test run, then restore it.
+
+    Generation is synchronous (the real call is suspended), so this mutation is invisible
+    and always undone — `obj.method(...)` in the tests reaches the candidate, not the stub.
+    """
+    cls = namespace.get(patch[0]) if patch else None
+    if patch is None or not isinstance(cls, type) or patch[1] not in namespace:
+        yield
+        return
+    method = patch[1]
+    missing = object()
+    original = cls.__dict__.get(method, missing)
+    setattr(cls, method, namespace[method])
+    try:
+        yield
+    finally:
+        if original is missing:
+            delattr(cls, method)
+        else:
+            setattr(cls, method, original)
+
+
+def _call_tests(namespace: dict[str, object]) -> Check:
     failures: list[str] = []
     ran_any = False
     for name, value in namespace.items():
@@ -93,10 +127,9 @@ def _run_tests(impl_source: str, test_source: str) -> Check:
         try:
             cast("Callable[[], object]", value)()
         except JitiError:
-            raise  # a cascade's control-flow error (e.g. a cycle) must not look like a test failure
+            raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
         except Exception:
             failures.append(f"{name}:\n{traceback.format_exc()}")
-
     if not ran_any:
         return Check("tests", ok=False, output="no test_* functions were defined")
     return Check("tests", ok=not failures, output=_cap("\n\n".join(failures)))
