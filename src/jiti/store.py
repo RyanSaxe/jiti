@@ -8,8 +8,10 @@ jiti tells an untouched section from one you've edited by hand.
 
 from __future__ import annotations
 
+import ast
 import re
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -101,24 +103,26 @@ class JitiStore:
         return Resolution(Action.RUN if spec_matches else Action.REGENERATE, section)
 
     def write(self, declaration: Declaration, impl_body: str, test_body: str) -> Section:
-        """Persist (or replace) the impl and test sections for a declaration."""
+        """Persist (or replace) the impl and test sections, hoisting imports to the top."""
         spec = declaration.spec_hash
-        impl = Section(declaration.key, spec, content_hash(impl_body), impl_body)
-        self._upsert(self.impl_path(declaration), impl)
-        self._upsert(
-            self.test_path(declaration),
-            Section(declaration.key, spec, content_hash(test_body), test_body),
-        )
+        impl_imports, impl_code = _split_imports(impl_body)
+        impl = Section(declaration.key, spec, content_hash(impl_code), impl_code)
+        self._upsert(self.impl_path(declaration), impl, impl_imports)
+        test_imports, test_code = _split_imports(test_body)
+        test = Section(declaration.key, spec, content_hash(test_code), test_code)
+        self._upsert(self.test_path(declaration), test, test_imports)
         return impl
 
-    def _upsert(self, path: Path, section: Section) -> None:
+    def _upsert(self, path: Path, section: Section, imports: str) -> None:
         try:
-            sections = parse_sections(path.read_text())
+            existing_imports, sections = parse_file(path.read_text())
         except FileNotFoundError:
-            sections = {}
+            existing_imports, sections = "", {}
         sections[section.key] = section
+        combined = "\n".join(part for part in (existing_imports, imports) if part)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_file(sections))
+        path.write_text(render_file(combined, sections))
+        _clean_imports(path)
 
     def load(self, declaration: Declaration) -> Callable[..., Any]:
         """Compile the companion fresh (no bytecode cache) and return the declared function."""
@@ -149,9 +153,20 @@ def render_section(section: Section) -> str:
     )
 
 
-def render_file(sections: dict[str, Section]) -> str:
+def render_file(imports: str, sections: dict[str, Section]) -> str:
     body = "\n\n".join(render_section(section) for section in sections.values())
-    return f"{_FILE_HEADER}\n{body}\n"
+    preamble = f"{_FILE_HEADER}\n{imports}\n" if imports else _FILE_HEADER
+    return f"{preamble}\n{body}\n"
+
+
+def parse_file(text: str) -> tuple[str, dict[str, Section]]:
+    """Split a companion into its top import block and its declaration sections."""
+    lines = text.splitlines()
+    first_marker = next((i for i, line in enumerate(lines) if _BEGIN.match(line)), len(lines))
+    imports = "\n".join(
+        line for line in lines[:first_marker] if line.strip() and not line.lstrip().startswith("#")
+    )
+    return imports, parse_sections(text)
 
 
 def parse_sections(text: str) -> dict[str, Section]:
@@ -186,6 +201,32 @@ def _parse_one(lines: list[str], index: int, key: str) -> tuple[int, Section]:
         body=body,
     )
     return index + 1, section
+
+
+def _split_imports(source: str) -> tuple[str, str]:
+    """Separate top-level import statements from the rest of a translation unit."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return "", source
+    lines = source.splitlines()
+    import_lines: set[int] = set()
+    imports: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            end = node.end_lineno or node.lineno
+            imports.append("\n".join(lines[node.lineno - 1 : end]))
+            import_lines.update(range(node.lineno, end + 1))
+    body = "\n".join(line for number, line in enumerate(lines, 1) if number not in import_lines)
+    return "\n".join(imports), body.strip("\n")
+
+
+def _clean_imports(path: Path) -> None:
+    """Dedupe, merge, sort, and prune the hoisted import block (bodies untouched) via ruff."""
+    subprocess.run(
+        ["ruff", "check", "--fix", "--select", "F401,I", "--quiet", str(path)],
+        capture_output=True,
+    )
 
 
 def _begin_marker(key: str) -> str:

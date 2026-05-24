@@ -39,13 +39,3 @@ def test_returns_formatted_source():
 
     assert result.ok
     assert "def slugify(text: str) -> str:" in result.impl_source
-
-
-def test_strips_future_imports():
-    # `from __future__` is illegal once sections concatenate into one companion file.
-    with_future = "from __future__ import annotations\n\n" + CORRECT
-
-    result = validate(with_future, TESTS)
-
-    assert result.ok
-    assert "__future__" not in result.impl_source

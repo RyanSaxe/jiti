@@ -81,12 +81,21 @@ def introspect(func: types.FunctionType, owner: type | None = None) -> Declarati
         module=func.__module__,
         qualname=func.__qualname__,
         name=func.__name__,
-        signature=inspect.signature(func),
+        signature=_signature(func),
         docstring=inspect.getdoc(func),
         hint=analyze_body(func),
         available_symbols=_module_symbols(func),
         class_context=class_context,
     )
+
+
+def _signature(func: types.FunctionType) -> inspect.Signature:
+    # eval_str resolves stringized annotations (from `from __future__ import annotations` or
+    # quoted forward refs) to real types, so the prompt shows `list[str]`, not `'list[str]'`.
+    try:
+        return inspect.signature(func, eval_str=True)
+    except (NameError, TypeError, AttributeError):
+        return inspect.signature(func)
 
 
 def analyze_body(func: types.FunctionType) -> str | None:

@@ -95,6 +95,31 @@ def test_resolve_edited_changed_spec_says_conflict(store):
     assert store.resolve(make_declaration(docstring="new")).action is Action.CONFLICT
 
 
+def test_imports_are_hoisted_deduped_and_bodies_left_import_free(store):
+    a = make_declaration(qualname="a")
+    b = make_declaration(qualname="b")
+    store.write(a, "import re\n\ndef a():\n    return re.compile('x')", "def test_a():\n    a()")
+    store.write(b, "import re\n\ndef b():\n    return re.compile('y')", "def test_b():\n    b()")
+
+    text = store.impl_path(a).read_text()
+    assert text.count("import re") == 1  # deduped across sections
+    assert text.index("import re") < text.index("# === jiti:")  # hoisted above the sections
+    assert store.read_section(a).body == "def a():\n    return re.compile('x')"  # body import-free
+
+
+def test_future_import_is_hoisted_and_the_file_stays_valid(store):
+    declaration = make_declaration()
+    store.write(
+        declaration,
+        "from __future__ import annotations\n\ndef slugify():\n    return 'a'",
+        "def test_s():\n    slugify()",
+    )
+
+    text = store.impl_path(declaration).read_text()
+    compile(text, "<companion>", "exec")  # the original crash: __future__ must be file-first
+    assert "from __future__ import annotations" in text
+
+
 def test_multiple_declarations_share_one_companion_file(store):
     slugify = make_declaration(qualname="slugify")
     parse = make_declaration(qualname="parse")

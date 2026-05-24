@@ -73,7 +73,6 @@ def validate(
     namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
     onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
     """
-    impl_source = _strip_future_imports(impl_source)
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         impl_file = workdir / "candidate.py"
@@ -169,11 +168,3 @@ def _run(
 def cap(text: str, limit: int = 4000) -> str:
     """Truncate long tool/check output so it can't blow up the agent's context."""
     return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
-
-
-def _strip_future_imports(source: str) -> str:
-    """Drop `from __future__ import ...` lines — illegal mid-file once sections concatenate,
-    and unnecessary on the supported Python."""
-    return "\n".join(
-        line for line in source.splitlines() if not line.lstrip().startswith("from __future__ ")
-    )

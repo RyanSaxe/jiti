@@ -8,8 +8,6 @@ Run `python -m examples.semver demo` with `ANTHROPIC_API_KEY` set (and `JITI_LOG
 watch the calls) to generate the whole library in one go.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from jiti import jiti
@@ -29,7 +27,7 @@ class Version:
         return f"{core}-{self.prerelease}" if self.prerelease else core
 
     @jiti
-    def bump(self, part: str) -> Version:
+    def bump(self, part: str) -> "Version":
         """Return a new Version with `part` ('major', 'minor', or 'patch') incremented and
         every lower part reset to 0, dropping any prerelease. Raise ValueError for an
         unknown part."""

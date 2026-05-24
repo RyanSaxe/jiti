@@ -1,8 +1,6 @@
 """CLI for the semver example. Each command calls the @jiti functions, generating them on
 first use. Set ANTHROPIC_API_KEY (and JITI_LOG=info to watch generation)."""
 
-from __future__ import annotations
-
 import argparse
 
 from examples.semver.core import compare, latest, parse, satisfies, sort_versions
