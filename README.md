@@ -13,17 +13,18 @@ def slugify(text: str) -> str:
     ...
 ```
 
-The first time `slugify` is called, jiti writes a real implementation into a `.jiti/`
-companion file, validates it (ruff + ty + generated tests), commits it to disk, and runs
-it. Every call after that runs that plain Python — fast, free, deterministic, and yours
-to edit. It is a code generator, not a runtime LLM call: `@jiti` is closer to `protoc`
-than to a chatbot.
+The first time `slugify` is called, an in-process agent looks at the **real argument
+values**, explores your codebase, and writes + tests a real implementation into a `.jiti/`
+companion file (validated with ruff + ty + its own tests). It commits that to disk and runs
+it. Every call after that runs plain Python — fast, free, deterministic, and yours to edit.
 
 ## Why it's different
 
 Most "AI function" libraries call the model on every invocation. jiti generates **real
 code once** and then gets out of the way:
 
+- Generation is **agentic and live**: it runs at the call site, inspects the real inputs,
+  experiments, and explores the repo — so it writes code grounded in reality, not guesses.
 - The generated code is committed, reviewable Python — diff it, edit it, step through it.
 - It type-checks against your declared signature, so callers get full editor support.
 - After generation there is no model, no API key, no latency, no nondeterminism.
@@ -61,37 +62,23 @@ written should not be decorated.
 > stub, not anything jiti does. If it bothers you, disable the `empty-body` rule or use
 > `raise NotImplementedError` as the body.
 
-## Methods
-
-Write the class skeleton yourself and decorate only the methods you want generated. The
-implementation may use `self`:
-
-```python
-class Invoice:
-    def __init__(self, lines: list[Line]) -> None:
-        self.lines = lines
-
-    @jiti
-    def total(self) -> Decimal:
-        """Sum the line totals, applying each line's discount."""
-        ...
-```
-
-`invoice.total()` binds and type-checks like any method.
-
 ## How it works
 
-- **One declaration → one translation unit.** Each `@jiti` function generates a
-  self-contained implementation (one public symbol plus any private helpers) into a
-  companion module that mirrors your source: `src/app/text.py` → `.jiti/app/text.py`,
-  with tests under `.jiti/tests/`.
-- **Repair loop.** jiti asks the model for an implementation and tests, runs ruff + ty +
-  pytest, and feeds any failures back until everything is green.
-- **You can edit generated code.** jiti tracks each section with a hash. Edit a body and
-  it becomes yours — jiti runs it as-is and never overwrites it.
-- **Changing the interface re-generates.** Change a stub's signature or docstring and
-  jiti regenerates that section. If you've hand-edited it, jiti refuses to clobber your
-  work and surfaces a conflict instead.
+- **An in-process agent writes it.** At the call site, Claude gets tools to `inspect` the
+  real values, `run_python` against deep-copied args, `read`/`grep` the codebase, and
+  `submit` candidates (ruff + ty + tests, run in-process) — iterating until green.
+- **Generation cascades along the call stack.** When a candidate's tests run and call
+  another `@jiti` function, that callee is generated too — the live call graph *is* the
+  dependency graph (cycles are detected and reported). Deep chains may hang while they build.
+- **One declaration → one translation unit.** Each `@jiti` function becomes a
+  self-contained implementation (one public symbol plus private helpers) in a companion
+  module mirroring your source: `src/app/text.py` → `.jiti/app/text.py`, tests under
+  `.jiti/tests/`.
+- **You can edit generated code.** jiti tracks each section with a hash. Edit a body and it
+  becomes yours — jiti runs it as-is and never overwrites it.
+- **Changing the interface re-generates.** Change a stub's signature or docstring and jiti
+  regenerates that section; if you've hand-edited it, jiti surfaces a conflict instead of
+  clobbering your work.
 
 ## Version control is yours
 
@@ -100,30 +87,31 @@ production runs the cached code with no API key) or add it to `.gitignore` — y
 
 ## Configuration
 
-By default jiti uses Anthropic's Claude and needs `ANTHROPIC_API_KEY` in the environment
-during generation (never afterward). Point jiti at a different model, store, or any object
-with a `complete(prompt) -> str` method:
+By default jiti uses Anthropic's Claude and needs `ANTHROPIC_API_KEY` set during generation
+(never afterward — committed code runs without it). Supply your own engine — a custom
+Anthropic client, model, or store — with `@jiti(engine=...)`:
 
 ```python
-from jiti import Codegen, AnthropicModel, jiti
-from jiti.store import JitiStore
+from pathlib import Path
 
-codegen = Codegen(
-    model_factory=lambda: AnthropicModel(model="claude-opus-4-7"),
-    store=JitiStore(Path(".jiti")),
-)
+import anthropic
+from jiti import Engine, JitiStore, jiti
+
+engine = Engine(client=anthropic.Anthropic(), store=JitiStore(Path(".jiti")))
 
 
-@jiti(strategy=codegen)
+@jiti(engine=engine)
 def slugify(text: str) -> str:
     """Convert text to a URL-safe slug."""
     ...
 ```
 
+Clear the cache with `jiti.clear()` (or just delete `.jiti/`).
+
 ## Status
 
-Early MVP. Supported today: free functions and instance methods, lazy first-call
-generation, the ruff + ty + pytest repair loop, the edit/conflict lifecycle, and the
-Anthropic provider. Not yet: whole-class generation, a runtime `jiti.live` strategy,
-multiple providers, and a `jiti eject` command that inlines generated code back into your
-source and removes jiti entirely.
+Early and evolving. Supported today: free functions, lazy first-call **agentic** generation
+(inspect real values, explore, experiment, test), in-process validation with cascading
+generation, the edit/conflict lifecycle, and Anthropic. Scoped to **pure functions**. Not
+yet: method generation (the next step), whole-class generation, multiple providers,
+dependency-aware invalidation, and a `jiti eject` command.
