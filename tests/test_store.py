@@ -120,6 +120,14 @@ def test_future_import_is_hoisted_and_the_file_stays_valid(store):
     assert "from __future__ import annotations" in text
 
 
+def test_write_publishes_atomically_leaving_no_temp_files(store):
+    declaration = make_declaration()
+    store.write(declaration, IMPL, TESTS)
+
+    companion = store.impl_path(declaration)
+    assert list(companion.parent.iterdir()) == [companion]  # rename published; temp cleaned up
+
+
 def test_multiple_declarations_share_one_companion_file(store):
     slugify = make_declaration(qualname="slugify")
     parse = make_declaration(qualname="parse")

@@ -9,10 +9,12 @@ jiti tells an untouched section from one you've edited by hand.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -122,8 +124,7 @@ class JitiStore:
         sections[section.key] = section
         combined = "\n".join(part for part in (existing_imports, imports) if part)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_file(combined, sections))
-        _clean_imports(path)
+        _atomic_write(path, render_file(combined, sections))
 
     def load(self, declaration: Declaration) -> Callable[..., Any]:
         """Compile the companion fresh (no bytecode cache) and return the declared function."""
@@ -221,6 +222,27 @@ def _split_imports(source: str) -> tuple[str, str]:
     body = "\n".join(line for number, line in enumerate(lines, 1) if number not in import_lines)
     body = re.sub(r"\n{3,}", "\n\n", body).strip("\n")  # close the gap where imports were
     return "\n".join(imports), body
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Publish `text` to `path` via a same-directory temp file and an atomic rename, so a
+    reader (or a second process cold-starting the same module) never sees a half-written
+    companion. This rename is the only concurrency guard jiti makes — see the README's
+    "Concurrency" section for why we stop here rather than take on cross-process locks.
+
+    The temp file ends in `.py` (so `_clean_imports`' ruff pass actually processes it) and
+    lives beside the target (so the rename stays on one filesystem, where it is atomic).
+    """
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}.", suffix=".py")
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        tmp.write_text(text)
+        _clean_imports(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _clean_imports(path: Path) -> None:
