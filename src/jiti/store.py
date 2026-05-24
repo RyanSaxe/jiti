@@ -9,9 +9,12 @@ jiti tells an untouched section from one you've edited by hand.
 from __future__ import annotations
 
 import re
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from jiti.declaration import Declaration, short_hash
 
@@ -116,6 +119,21 @@ class JitiStore:
         sections[section.key] = section
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_file(sections))
+
+    def load(self, declaration: Declaration) -> Callable[..., Any]:
+        """Compile the companion fresh (no bytecode cache) and return the declared function."""
+        path = self.impl_path(declaration)
+        namespace: dict[str, Any] = {
+            "__name__": f"_jiti.{declaration.module}",
+            "__file__": str(path),
+        }
+        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        return namespace[declaration.name]
+
+    def clear(self) -> None:
+        """Delete the entire generated mirror."""
+        if self.root.exists():
+            shutil.rmtree(self.root)
 
 
 def render_section(section: Section) -> str:

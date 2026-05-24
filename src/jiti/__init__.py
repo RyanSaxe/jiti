@@ -1,22 +1,36 @@
 """jiti — Just In Time Implementation.
 
-Declare a function or method by its typed interface; jiti has an LLM write, validate, and
-cache a real implementation you can read, edit, and own.
+Declare a function by its typed interface; on the first call, an in-process agent inspects
+the real values, explores your codebase, writes and tests a real implementation, and caches
+it under `.jiti/`. Every call after that runs that committed code.
 """
 
+from pathlib import Path
+
 from jiti.decorator import jiti
-from jiti.errors import ConflictError, GenerationError, JitiError, RealBodyError
-from jiti.model import AnthropicModel, Model
-from jiti.strategy import Codegen, Strategy
+from jiti.engine import Engine
+from jiti.errors import (
+    ConflictError,
+    GenerationCycleError,
+    GenerationError,
+    JitiError,
+    RealBodyError,
+)
+from jiti.store import JitiStore
 
 __all__ = [
-    "AnthropicModel",
-    "Codegen",
     "ConflictError",
+    "Engine",
+    "GenerationCycleError",
     "GenerationError",
     "JitiError",
-    "Model",
+    "JitiStore",
     "RealBodyError",
-    "Strategy",
+    "clear",
     "jiti",
 ]
+
+
+def clear() -> None:
+    """Delete the generated mirror at ./.jiti."""
+    JitiStore(Path.cwd() / ".jiti").clear()

@@ -15,7 +15,11 @@ class RealBodyError(JitiError):
 
 
 class GenerationError(JitiError):
-    """The repair loop failed to produce an implementation that passes validation."""
+    """The agent failed to produce an implementation that passes validation."""
+
+
+class GenerationCycleError(JitiError):
+    """Generation re-entered a function already being generated (mutually recursive stubs)."""
 
 
 class ConflictError(JitiError):
