@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from jiti.declaration import Declaration
-from jiti.errors import ConflictError, JitiError
+from jiti.errors import ConflictError
 from jiti.generate import DEFAULT_MAX_ATTEMPTS, generate
 from jiti.model import AnthropicModel, Model
 from jiti.store import Action, JitiStore
@@ -47,11 +47,6 @@ class Codegen:
         return load_impl(self.store, declaration)
 
     def _generate(self, declaration: Declaration) -> None:
-        if declaration.class_context is not None:
-            raise JitiError(
-                f"{declaration.key}: generating method implementations is not wired up yet "
-                "(method dispatch works once an implementation exists)."
-            )
         model = self.model_factory()
         with tempfile.TemporaryDirectory() as tmp:
             generated = generate(
@@ -61,10 +56,18 @@ class Codegen:
                 import_path=_import_path(declaration),
                 max_attempts=self.max_attempts,
             )
-        committed_tests = (
-            f"from {declaration.module} import {declaration.name}\n\n{generated.test_source}"
+        self.store.write(
+            declaration, generated.impl_source, _committed_tests(declaration, generated.test_source)
         )
-        self.store.write(declaration, generated.impl_source, committed_tests)
+
+
+def _committed_tests(declaration: Declaration, test_source: str) -> str:
+    """Tests as committed: import the class (for a method) or the function (for a free fn).
+
+    Run through pytest, these exercise the real dispatched implementation via its public API.
+    """
+    importer = declaration.class_context.name if declaration.class_context else declaration.name
+    return f"from {declaration.module} import {importer}\n\n{test_source}"
 
 
 def load_impl(store: JitiStore, declaration: Declaration) -> Callable[..., Any]:

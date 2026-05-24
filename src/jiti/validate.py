@@ -47,20 +47,24 @@ class ValidationResult:
 
 
 def validate(
-    name: str,
     impl_source: str,
-    test_source: str,
+    test_module: str,
     workdir: Path,
     *,
     import_path: Sequence[str] = (),
 ) -> ValidationResult:
-    """Run ruff, ty, and pytest on a candidate; return checks and the formatted source."""
+    """Run ruff, ty, and pytest on a candidate; return checks and the formatted source.
+
+    The impl lives in `candidate.py`; `test_module` is written verbatim as the test file,
+    so the caller decides how the tests reach the implementation (a bare import for a free
+    function, or importing the class and patching the candidate onto it for a method).
+    """
     impl_file = workdir / "candidate.py"
     impl_file.write_text(impl_source)
     formatted = _format(impl_file)
 
     test_file = workdir / "test_candidate.py"
-    test_file.write_text(f"from candidate import {name}\n\n{test_source}\n")
+    test_file.write_text(test_module if test_module.endswith("\n") else test_module + "\n")
 
     checks = (
         _check("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),

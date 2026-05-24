@@ -38,8 +38,11 @@ class _JitiCallable:
         return self._resolve()(*args, **kwargs)
 
     def __get__(self, instance: object, owner: type | None = None) -> Callable[..., Any]:
-        impl = self._resolve()
-        return impl if instance is None else functools.partial(impl, instance)
+        # Class access (`Cls.method`) returns the wrapper unresolved — resolving here would
+        # recurse, since introspecting the class to build its context reads its attributes.
+        if instance is None:
+            return self
+        return functools.partial(self._resolve(), instance)
 
     def _resolve(self) -> Callable[..., Any]:
         if self._impl is None:

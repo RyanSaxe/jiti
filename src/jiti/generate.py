@@ -40,7 +40,8 @@ def generate(
     report = ""
     for _ in range(max_attempts):
         impl, tests = parse_response(model.complete(prompt))
-        result = validate(declaration.name, impl, tests, workdir, import_path=import_path)
+        test_module = _validation_module(declaration, tests)
+        result = validate(impl, test_module, workdir, import_path=import_path)
         if result.ok:
             return Generated(impl_source=result.impl_source, test_source=tests)
         report = result.report
@@ -63,6 +64,23 @@ def _extract_block(text: str, label: str) -> str:
     if fence is None:
         raise GenerationError(f"model response has no code fence after `{marker}`")
     return fence.group(1).strip()
+
+
+def _validation_module(declaration: Declaration, test_source: str) -> str:
+    """The test file run during validation: how the tests reach the candidate impl.
+
+    For a method, import the authored class and patch the candidate onto it so the tests'
+    `instance.method(...)` calls hit the candidate; for a function, a bare import suffices.
+    """
+    name = declaration.name
+    if declaration.class_context is not None:
+        cls = declaration.class_context.name
+        return (
+            f"from candidate import {name}\n"
+            f"from {declaration.module} import {cls}\n"
+            f"{cls}.{name} = {name}\n\n{test_source}"
+        )
+    return f"from candidate import {name}\n\n{test_source}"
 
 
 def _initial_prompt(declaration: Declaration) -> str:
@@ -138,11 +156,24 @@ def _rules_section(declaration: Declaration) -> str:
             f"- Any helpers must be private and prefixed `_{declaration.name}__`.",
             f"- You may import the standard library and, from `{declaration.module}`, these "
             f"module-level names: {imports}.",
-            "- Tests must be named pytest functions (test_*) that call the function by its bare",
-            f"  name `{declaration.name}` (it is already in scope — do not import it).",
+            *_test_rules(declaration),
             "- Cover the behavior thoroughly, including edge cases.",
         ]
     )
+
+
+def _test_rules(declaration: Declaration) -> list[str]:
+    if declaration.class_context is not None:
+        cls = declaration.class_context.name
+        return [
+            f"- Implement as a top-level `def {declaration.name}(self, ...)`: instance first.",
+            f"- Tests must construct a `{cls}` instance (in scope) and call the method on it,",
+            f"  e.g. `obj = {cls}(...); obj.{declaration.name}(...)`.",
+        ]
+    return [
+        "- Tests must be named pytest functions (test_*) that call the function by its bare",
+        f"  name `{declaration.name}` (it is already in scope — do not import it).",
+    ]
 
 
 def _format_section() -> str:
