@@ -81,6 +81,43 @@ class Cart:
 
 `cart.total()` binds and type-checks like any method.
 
+## Test-driven generation
+
+Make a function's *definition of done* explicit: from your test file, declare the tests it must
+pass with `@jiti.required_for(target)`. Tests import the code they test (so the reference is
+real and type-checked), and **running `pytest` is the loop** — generation happens to satisfy
+your tests, red → green.
+
+```python
+# tests/test_money.py
+from decimal import Decimal
+
+from app.money import parse_money
+from jiti import jiti
+
+
+@jiti.required_for(parse_money)        # real body → your own gate test
+def test_parses_symbols():
+    assert parse_money("$1,234.56") == Decimal("1234.56")
+
+
+@jiti.required_for(parse_money)        # empty body → jiti writes this test from the interface
+def test_parse_money_rejects_garbage() -> None:
+    """parse_money raises ValueError on '' and 'not money'."""
+    ...
+```
+
+- A **real-bodied** test is yours: it runs against the candidate during generation and must pass.
+- An **empty-bodied** stub is a **jiti-test**. Because it's written *before* the implementation
+  exists, it can only see the interface — so it can never couple to implementation details. jiti
+  generates it (validated by ruff + ty), commits it under `.jiti/tests/`, and gates the
+  implementation on it.
+
+Once a candidate is green, if the agent rates its own quality below `Engine(quality_threshold=…)`
+(default 7) it takes one refactor pass (`max_refactor`, default 1) before committing. The
+edge-case tests the agent writes for itself are committed as `test_scratch_*` — prune them when
+you want a lean repo; your declared tests keep their names.
+
 ## How it works
 
 - **An in-process agent writes it.** At the call site, Claude gets tools to `inspect` the
@@ -171,7 +208,9 @@ cross-process locks, which add real complexity to avoid a cost this workflow alr
 
 Early and evolving. Supported today: free functions **and instance methods**, lazy
 first-call **agentic** generation (inspect real values, explore, experiment, test),
-in-process validation with cascading generation, the edit/conflict lifecycle, and Anthropic.
-Scoped to **pure functions**. Not yet: whole-class generation, multiple providers,
-dependency-aware invalidation (changing a callee won't re-check callers), and a `jiti eject`
-command.
+in-process validation with cascading generation, **test-driven generation** via
+`@jiti.required_for` (human gates + interface-only jiti-tests) with a score-gated refactor
+pass, the edit/conflict lifecycle, and Anthropic. Scoped to **pure functions**. Not yet:
+`required_for` on methods, a `jiti` CLI (`test prune`/`keep`, `merge`), an optional pytest
+plugin, whole-class generation, multiple providers, dependency-aware invalidation (changing a
+callee won't re-check callers), and a `jiti eject` command.
