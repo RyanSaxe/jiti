@@ -35,8 +35,9 @@ class ScriptedClient:
         return response
 
 
-def submit(name: str, impl: str, tests: str) -> Response:
-    use = Block(
-        type="tool_use", id=f"t-{name}", name="submit", input={"impl": impl, "tests": tests}
-    )
+def submit(name: str, impl: str, tests: str, quality: int | None = None) -> Response:
+    payload: dict[str, Any] = {"impl": impl, "tests": tests}
+    if quality is not None:
+        payload["quality"] = quality
+    use = Block(type="tool_use", id=f"t-{name}", name="submit", input=payload)
     return Response(content=[use])

@@ -84,8 +84,15 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Named test_* functions, bare-name calls.",
                 },
+                "quality": {
+                    "type": "integer",
+                    "description": (
+                        "Your honest 0-10 rating of the code's quality (readability, structure, "
+                        "simplicity). Below the threshold earns one refactor pass before commit."
+                    ),
+                },
             },
-            "required": ["impl", "tests"],
+            "required": ["impl", "tests", "quality"],
         },
     },
 ]
@@ -101,7 +108,11 @@ class CallContext:
     import_path: tuple[str, ...] = ()
     mode: str = "impl"
     gates: tuple[Gate, ...] = ()
+    quality_threshold: int = 7
+    max_refactor: int = 1
     passing: tuple[str, str] | None = None
+    refactors_used: int = 0
+    done: bool = False
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
@@ -131,11 +142,12 @@ class CallContext:
             found = _python_grep(pattern)
         return cap(found) or "(no matches)"
 
-    def submit(self, impl: str, tests: str) -> str:
+    def submit(self, impl: str, tests: str, quality: int = 10) -> str:
         if self.mode == "test":
             result = validate(impl, "", import_path=self.import_path, execute=False)
             if result.ok:
                 self.passing = (result.impl_source, "")
+                self.done = True
                 return "PASSED — ruff and ty are green."
             return f"FAILED:\n{result.report}"
         patch = None
@@ -149,10 +161,17 @@ class CallContext:
             name=self.declaration.name,
             gates=self.gates,
         )
-        if result.ok:
-            self.passing = (result.impl_source, tests)
+        if not result.ok:
+            return f"FAILED:\n{result.report}"
+        self.passing = (result.impl_source, tests)
+        if quality >= self.quality_threshold or self.refactors_used >= self.max_refactor:
+            self.done = True
             return "PASSED — ruff, ty, and tests are all green."
-        return f"FAILED:\n{result.report}"
+        self.refactors_used += 1
+        return (
+            f"PASSED, but you rated quality {quality} < {self.quality_threshold}. Refactor for "
+            "readability, structure, and simplicity while keeping every test green, then resubmit."
+        )
 
     def _bound_args(self) -> dict[str, object]:
         try:

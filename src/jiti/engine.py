@@ -25,6 +25,8 @@ from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_TURNS = 40
+DEFAULT_QUALITY_THRESHOLD = 7
+DEFAULT_MAX_REFACTOR = 1
 
 
 @dataclass
@@ -43,6 +45,8 @@ class Engine:
     max_turns: int = DEFAULT_MAX_TURNS
     style: str = STYLE_GUIDE
     test_guide: str = TEST_GUIDE
+    quality_threshold: int = DEFAULT_QUALITY_THRESHOLD
+    max_refactor: int = DEFAULT_MAX_REFACTOR
     _in_progress: set[str] = field(default_factory=set)
 
     def implement(
@@ -73,7 +77,13 @@ class Engine:
         try:
             gates = self._prepare_gates(declaration)
             context = CallContext(
-                declaration, args, kwargs, import_path=_import_path(declaration), gates=gates
+                declaration,
+                args,
+                kwargs,
+                import_path=_import_path(declaration),
+                gates=gates,
+                quality_threshold=self.quality_threshold,
+                max_refactor=self.max_refactor,
             )
             total_cost = self._run_agent(context, self._system_blocks(), _task_prompt(declaration))
             if context.passing is None:
@@ -149,8 +159,8 @@ class Engine:
             if not tool_uses:
                 return total_cost
             results = [_tool_result(context, block) for block in tool_uses]
-            if context.passing is not None:
-                return total_cost  # a submit just passed — skip the model's wrap-up round-trip
+            if context.done:
+                return total_cost  # green (and quality cleared) — skip the model's wrap-up turn
             messages.append({"role": "user", "content": results})
         return total_cost
 
