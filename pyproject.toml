@@ -36,6 +36,7 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.ruff]
@@ -55,3 +56,10 @@ empty-body = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["jiti"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
