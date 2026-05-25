@@ -9,6 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+
 # jiti-generated code (commit this in real projects; ignored here so the demo stays clean)
 .jiti/
 

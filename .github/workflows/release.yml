@@ -1,0 +1,83 @@
+name: Release
+
+# Every push to main, python-semantic-release reads the conventional-commit history
+# (feat: / fix: / BREAKING CHANGE) and decides the next version. When a release is
+# warranted it bumps pyproject.toml, updates the changelog, commits, tags, and cuts a
+# GitHub Release; the deploy job then publishes to PyPI via Trusted Publishing (OIDC —
+# no token stored). Commits that don't warrant a release (docs:, chore:, refactor: …)
+# are a no-op.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the bump + changelog, push the tag, create the Release
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # PSR needs full history and tags
+
+      - name: Set up uv and Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Tests (never release red code)
+        run: uv run pytest
+
+      - name: Version, changelog, tag, GitHub Release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v10.5.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach built distributions to the GitHub Release
+        if: steps.release.outputs.released == 'true'
+        uses: python-semantic-release/publish-action@v10.5.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.release.outputs.tag }}
+
+      - name: Hand the distributions to the deploy job
+        if: steps.release.outputs.released == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+
+  deploy:
+    name: publish to PyPI
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing (OIDC)
+    environment:
+      name: pypi
+      url: https://pypi.org/project/jiti/
+    steps:
+      - name: Download the built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

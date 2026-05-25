@@ -6,12 +6,27 @@ readme = "README.md"
 authors = [
     { name = "Ryan Saxe", email = "ryancsaxe+1@gmail.com" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
+keywords = ["llm", "codegen", "ai", "anthropic", "claude", "tdd", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 dependencies = [
     "anthropic>=0.104.1",
     "ruff>=0.15.14",
     "ty>=0.0.39",
 ]
+
+[project.urls]
+Homepage = "https://github.com/RyanSaxe/jiti"
+Repository = "https://github.com/RyanSaxe/jiti"
+Issues = "https://github.com/RyanSaxe/jiti/issues"
 
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]
@@ -21,6 +36,7 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.ruff]
@@ -40,3 +56,22 @@ empty-body = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["jiti"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.semantic_release]
+# Releases are driven by conventional-commit messages (feat:, fix:, BREAKING CHANGE).
+# The version lives only in pyproject.toml; PSR stamps it, then re-syncs uv.lock.
+version_toml = ["pyproject.toml:project.version"]
+commit_parser = "conventional"
+build_command = """
+pip install uv
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+uv build
+"""
