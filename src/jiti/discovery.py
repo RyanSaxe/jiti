@@ -7,7 +7,8 @@ point. By default it scans the working tree for test files; configure `Engine(te
 to point at specific dirs/files (faster), or `Engine(test_paths=())` to turn it off.
 
 Importing happens at generation time, when your code is already loaded, so a test's
-`from your.module import target` resolves without a circular import.
+`from your.module import target` resolves without a circular import. Like pytest collection,
+this leaves the imported modules (and any test roots appended to `sys.path`) in place.
 """
 
 from __future__ import annotations
@@ -81,11 +82,11 @@ def _import_file(path: Path) -> None:
     if name in sys.modules:
         return
     if root not in sys.path:
-        sys.path.insert(0, root)
+        sys.path.append(root)  # append, not prepend, so discovery never shadows real packages
     try:
         importlib.import_module(name)
     except Exception as error:
-        logger.warning("jiti: skipped test file during discovery: %s (%s)", path, error)
+        logger.warning("jiti: could not import %s — its gates won't apply (%s)", path, error)
 
 
 def _module_name(path: Path) -> tuple[str, str]:

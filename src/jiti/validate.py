@@ -33,12 +33,14 @@ TY = (sys.executable, "-m", "ty")
 def _test_failures() -> tuple[type[BaseException], ...]:
     # A failing test raises `Exception` (e.g. AssertionError), but pytest signals some failures
     # (a `pytest.raises` that didn't raise) via BaseException subclasses a plain `except Exception`
-    # would miss. Catch those too when pytest is importable (it always is during generation).
+    # would miss. Catch those too when pytest is importable; never let its absence or an API
+    # change break `import jiti` — fall back to plain Exception.
     try:
         import pytest
-    except ImportError:
+
+        return (Exception, pytest.fail.Exception, pytest.skip.Exception, pytest.xfail.Exception)
+    except Exception:
         return (Exception,)
-    return (Exception, pytest.fail.Exception, pytest.skip.Exception, pytest.xfail.Exception)
 
 
 _TEST_FAILURES = _test_failures()
