@@ -19,7 +19,7 @@ from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
-from jiti.store import Action, JitiStore
+from jiti.store import Action, JitiStore, scratch_rename
 from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 
 DEFAULT_MODEL = "claude-opus-4-7"
@@ -213,11 +213,13 @@ _DEFAULT: Engine | None = None
 
 
 def _committed_tests(declaration: Declaration, tests: str) -> str:
-    # A method's tests already import the class and call `obj.method(...)`; a free function's
-    # tests use the bare name, so they need the import prepended for standalone pytest runs.
+    # The agent's own tests are committed as prunable `scratch` (the author's jiti-tests, written
+    # via write_test, keep their names). A method's tests already import the class and call
+    # `obj.method(...)`; a free function's tests use the bare name, so prepend the import.
+    scratch = scratch_rename(tests)
     if declaration.class_context is not None:
-        return tests
-    return f"from {declaration.module} import {declaration.name}\n\n{tests}"
+        return scratch
+    return f"from {declaration.module} import {declaration.name}\n\n{scratch}"
 
 
 def _import_path(declaration: Declaration) -> tuple[str, ...]:

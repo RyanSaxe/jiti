@@ -37,6 +37,18 @@ def content_hash(text: str) -> str:
     return short_hash(text.strip())
 
 
+_AGENT_TEST_DEF = re.compile(r"^def test_(?!scratch_)", re.MULTILINE)
+
+
+def scratch_rename(source: str) -> str:
+    """Mark agent-written tests as prunable by prefixing their names with `scratch_`.
+
+    Author-declared jiti-tests keep their real names; only the agent's own exploratory tests
+    are scratch, so a later `jiti test prune`/`keep` can drop or promote them by this prefix.
+    """
+    return _AGENT_TEST_DEF.sub("def test_scratch_", source)
+
+
 @dataclass(frozen=True)
 class Section:
     """One declaration's generated body plus the provenance recorded in its header."""
