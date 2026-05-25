@@ -12,13 +12,23 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from jiti.discovery import module_name, walk_py_files
+from jiti.decorator import _JitiCallable
+from jiti.discovery import import_file, module_name, walk_py_files
 from jiti.errors import MergeError
-from jiti.store import SectionRef
+from jiti.store import (
+    Action,
+    JitiStore,
+    SectionRef,
+    drop_section,
+    inventory,
+    module_relpath,
+    parse_file,
+)
 from jiti.validate import RUFF
 
 
@@ -84,6 +94,97 @@ def _match(target: str, refs: Sequence[SectionRef]) -> list[SectionRef]:
     if exact:
         return exact
     return [ref for ref in refs if ref.module == target or ref.key.startswith(f"{target}.")]
+
+
+def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool) -> int:
+    """Fold the selected generated sections back into their source files. Returns an exit code.
+
+    Gating runs in full before any write: introspecting a stub reads its source by line number,
+    so rewriting one function would corrupt the next one's spec check. We resolve every section
+    against the intact source first, then apply the (pure-text) rewrites.
+    """
+    mirror = root / ".jiti"
+    refs = inventory(mirror)
+    if not refs:
+        print("nothing to merge (.jiti/ is empty or absent).")
+        return 0
+
+    chosen = list(refs) if merge_all else select(targets, refs)
+    sources = source_files(root)
+    store = JitiStore(mirror)
+
+    plans: list[tuple[SectionRef, Path, Action]] = []
+    blocked = False
+    for ref in chosen:
+        try:
+            plans.append(_gate(ref, sources, store))
+        except MergeError as error:
+            print(f"skip {ref.key}: {error}")
+            blocked = blocked or not merge_all
+
+    for ref, source_path, action in plans:
+        if not dry_run:
+            _apply(ref, source_path, mirror)
+        print(f"{'would merge' if dry_run else 'merged'} {ref.key}  ({action.value})")
+
+    if not dry_run and plans:
+        _remove_empty_dirs(mirror)
+        if not _any_jiti_left(sources):
+            print("no @jiti remains — you can drop jiti from your dependencies.")
+    print(f"\n{'would merge' if dry_run else 'merged'} {len(plans)} section(s).")
+    return 1 if blocked else 0
+
+
+def _gate(
+    ref: SectionRef, sources: dict[str, Path], store: JitiStore
+) -> tuple[SectionRef, Path, Action]:
+    if ref.is_method:
+        raise MergeError("merging methods is not supported yet")
+    source_path = sources.get(ref.module)
+    if source_path is None:
+        raise MergeError(f"source file for `{ref.module}` not found; regenerate or clear")
+    action = _resolve_state(ref, source_path, store)
+    if action in (Action.REGENERATE, Action.CONFLICT):
+        raise MergeError("source and .jiti are out of sync — run it or your tests, then merge")
+    return ref, source_path, action
+
+
+def _apply(ref: SectionRef, source_path: Path, mirror: Path) -> None:
+    imports, _ = parse_file(ref.impl_path.read_text())
+    new_source = merge_into_source(
+        source_path.read_text(), ref.name, ref.module, ref.section.body, imports
+    )
+    write_source(source_path, new_source)
+    drop_section(ref.impl_path, ref.key)
+    drop_section(_test_path(mirror, ref), ref.key)
+
+
+def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Action:
+    import_file(source_path)
+    module = sys.modules.get(ref.module)
+    wrapper = getattr(module, ref.name, None) if module is not None else None
+    if not isinstance(wrapper, _JitiCallable):
+        raise MergeError(f"no @jiti `{ref.qualname}` in {source_path.name}; regenerate or clear")
+    return store.resolve(wrapper.declaration()).action
+
+
+def _test_path(mirror: Path, ref: SectionRef) -> Path:
+    relpath = module_relpath(ref.module)
+    return mirror / "tests" / relpath.with_name(f"test_{relpath.name}")
+
+
+def _remove_empty_dirs(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    if not any(root.iterdir()):
+        root.rmdir()
+
+
+def _any_jiti_left(sources: dict[str, Path]) -> bool:
+    return any("@jiti" in path.read_text() for path in set(sources.values()))
 
 
 def _find_jiti_def(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:

@@ -176,6 +176,25 @@ class JitiStore:
             shutil.rmtree(self.root)
 
 
+def drop_section(path: Path, key: str) -> bool:
+    """Remove `key` from a companion file, deleting the file if no sections remain.
+
+    Returns True if the file was deleted. A missing file or absent key is a no-op.
+    """
+    try:
+        imports, sections = parse_file(path.read_text())
+    except FileNotFoundError:
+        return False
+    if key not in sections:
+        return False
+    del sections[key]
+    if not sections:
+        path.unlink()
+        return True
+    _atomic_write(path, render_file(imports, sections))
+    return False
+
+
 def render_section(section: Section) -> str:
     return "\n".join(
         [
