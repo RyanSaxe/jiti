@@ -17,6 +17,7 @@ from typing import Any
 
 from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration, Gate, introspect
+from jiti.discovery import import_test_modules
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.store import Action, JitiStore, scratch_rename
@@ -47,7 +48,18 @@ class Engine:
     test_guide: str = TEST_GUIDE
     quality_threshold: int = DEFAULT_QUALITY_THRESHOLD
     max_refactor: int = DEFAULT_MAX_REFACTOR
+    test_paths: tuple[str, ...] | None = None
+    """Where to find gates: None scans the tree, a tuple narrows it, () disables discovery."""
+
     _in_progress: set[str] = field(default_factory=set)
+    _discovered: bool = field(default=False)
+
+    def discover(self) -> None:
+        """Import the project's test modules once so their gates register before generation."""
+        if self._discovered:
+            return
+        self._discovered = True
+        import_test_modules(self.test_paths)
 
     def implement(
         self, declaration: Declaration, args: tuple[object, ...], kwargs: dict[str, object]

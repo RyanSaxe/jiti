@@ -118,6 +118,13 @@ Once a candidate is green, if the agent rates its own quality below `Engine(qual
 edge-case tests the agent writes for itself are committed as `test_scratch_*` — prune them when
 you want a lean repo; your declared tests keep their names.
 
+**How gates are found.** `required_for` registers a gate only when its test file is imported.
+Under pytest, collection does that; but a plain call (your app, a script) wouldn't — so before
+generating, jiti imports your test modules itself. By default it scans the working tree for
+`test_*.py` / `*_test.py` (skipping `.jiti`, virtualenvs, caches); set
+`Engine(test_paths=("tests",))` to narrow it (faster), or `Engine(test_paths=())` to turn it
+off. This runs only when something actually needs generating.
+
 ## How it works
 
 - **An in-process agent writes it.** At the call site, Claude gets tools to `inspect` the

@@ -52,6 +52,7 @@ class _JitiCallable:
     def _resolve(self, args: tuple[object, ...], kwargs: dict[str, object]) -> Callable[..., Any]:
         if self._impl is None:
             engine = self._engine or default_engine()
+            engine.discover()  # import test modules so `required_for` gates are registered first
             declaration = introspect(self._func, self._owner, tuple(self._gates))
             self._impl = engine.implement(declaration, args, kwargs)
         return self._impl
@@ -95,7 +96,8 @@ class _Jiti:
             if not isinstance(test, types.FunctionType):
                 raise JitiError("jiti.required_for can only decorate a plain test function.")
             gate = gate_for(test, target)
-            target._gates.append(gate)
+            if not any(existing.name == gate.name for existing in target._gates):
+                target._gates.append(gate)  # idempotent: discovery may import a test file twice
             if gate.kind == "human":
                 return test
             return cast(F, _jiti_test_runner(test, target))
