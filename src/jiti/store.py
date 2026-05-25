@@ -188,11 +188,27 @@ def drop_section(path: Path, key: str) -> bool:
     if key not in sections:
         return False
     del sections[key]
+    save_sections(path, imports, sections)
+    return not sections
+
+
+def save_sections(path: Path, imports: str, sections: dict[str, Section]) -> None:
+    """Persist a companion file's sections, deleting the file if there are none left."""
     if not sections:
-        path.unlink()
-        return True
+        path.unlink(missing_ok=True)
+        return
     _atomic_write(path, render_file(imports, sections))
-    return False
+
+
+def remove_empty_dirs(root: Path) -> None:
+    """Delete empty directories under `root`, and `root` itself if it ends up empty."""
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    if not any(root.iterdir()):
+        root.rmdir()
 
 
 def render_section(section: Section) -> str:

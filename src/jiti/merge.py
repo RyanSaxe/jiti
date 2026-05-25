@@ -28,6 +28,7 @@ from jiti.store import (
     inventory,
     module_relpath,
     parse_file,
+    remove_empty_dirs,
 )
 from jiti.validate import RUFF
 
@@ -128,7 +129,7 @@ def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool
         print(f"{'would merge' if dry_run else 'merged'} {ref.key}  ({action.value})")
 
     if not dry_run and plans:
-        _remove_empty_dirs(mirror)
+        remove_empty_dirs(mirror)
         if not _any_jiti_left(sources):
             print("no @jiti remains — you can drop jiti from your dependencies.")
     print(f"\n{'would merge' if dry_run else 'merged'} {len(plans)} section(s).")
@@ -171,16 +172,6 @@ def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Acti
 def _test_path(mirror: Path, ref: SectionRef) -> Path:
     relpath = module_relpath(ref.module)
     return mirror / "tests" / relpath.with_name(f"test_{relpath.name}")
-
-
-def _remove_empty_dirs(root: Path) -> None:
-    if not root.exists():
-        return
-    for path in sorted(root.rglob("*"), reverse=True):
-        if path.is_dir() and not any(path.iterdir()):
-            path.rmdir()
-    if not any(root.iterdir()):
-        root.rmdir()
 
 
 def _any_jiti_left(sources: dict[str, Path]) -> bool:
