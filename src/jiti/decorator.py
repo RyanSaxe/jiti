@@ -55,22 +55,28 @@ class _JitiCallable:
         return self._impl
 
 
-@overload
-def jiti[F: Callable[..., Any]](func: F) -> F: ...
+class _Jiti:
+    """The `@jiti` decorator as a callable object, so it can also host `jiti.required_for`."""
+
+    @overload
+    def __call__[F: Callable[..., Any]](self, func: F) -> F: ...
+
+    @overload
+    def __call__[F: Callable[..., Any]](
+        self, *, engine: Engine | None = ...
+    ) -> Callable[[F], F]: ...
+
+    def __call__[F: Callable[..., Any]](
+        self, func: F | None = None, *, engine: Engine | None = None
+    ) -> F | Callable[[F], F]:
+        """Declare a function or method by its interface; jiti generates the implementation.
+
+        Use bare (`@jiti`) for the default shared engine, or `@jiti(engine=...)` to supply your
+        own (e.g. a custom Anthropic client or store).
+        """
+        if func is None:
+            return lambda target: cast(F, _JitiCallable(target, engine))
+        return cast(F, _JitiCallable(func, engine))
 
 
-@overload
-def jiti[F: Callable[..., Any]](*, engine: Engine | None = ...) -> Callable[[F], F]: ...
-
-
-def jiti[F: Callable[..., Any]](
-    func: F | None = None, *, engine: Engine | None = None
-) -> F | Callable[[F], F]:
-    """Declare a function or method by its interface; jiti generates the implementation.
-
-    Use bare (`@jiti`) for the default shared engine, or `@jiti(engine=...)` to supply your
-    own (e.g. a custom Anthropic client or store).
-    """
-    if func is None:
-        return lambda target: cast(F, _JitiCallable(target, engine))
-    return cast(F, _JitiCallable(func, engine))
+jiti = _Jiti()
