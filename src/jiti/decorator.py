@@ -13,7 +13,7 @@ import types
 from collections.abc import Callable
 from typing import Any, cast, overload
 
-from jiti.declaration import Gate, analyze_body, gate_for, introspect
+from jiti.declaration import Declaration, Gate, analyze_body, gate_for, introspect
 from jiti.engine import Engine, default_engine
 from jiti.errors import JitiError
 
@@ -49,12 +49,15 @@ class _JitiCallable:
 
         return bound
 
+    def declaration(self) -> Declaration:
+        """The canonical spec for this stub — engine and CLI build state from it."""
+        return introspect(self._func, self._owner, tuple(self._gates))
+
     def _resolve(self, args: tuple[object, ...], kwargs: dict[str, object]) -> Callable[..., Any]:
         if self._impl is None:
             engine = self._engine or default_engine()
             engine.discover()  # import test modules so `required_for` gates are registered first
-            declaration = introspect(self._func, self._owner, tuple(self._gates))
-            self._impl = engine.implement(declaration, args, kwargs)
+            self._impl = engine.implement(self.declaration(), args, kwargs)
         return self._impl
 
 
@@ -111,8 +114,7 @@ def _jiti_test_runner(stub: types.FunctionType, target: _JitiCallable) -> Callab
     @functools.wraps(stub)
     def run(*args: Any, **kwargs: Any) -> Any:
         engine = target._engine or default_engine()
-        target_declaration = introspect(target._func, target._owner, tuple(target._gates))
-        return engine.run_test(introspect(stub), target_declaration)()
+        return engine.run_test(introspect(stub), target.declaration())()
 
     return run
 

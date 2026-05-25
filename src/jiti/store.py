@@ -96,10 +96,10 @@ class JitiStore:
     root: Path
 
     def impl_path(self, declaration: Declaration) -> Path:
-        return self.root / _module_relpath(declaration.module)
+        return self.root / module_relpath(declaration.module)
 
     def test_path(self, declaration: Declaration) -> Path:
-        relpath = _module_relpath(declaration.module)
+        relpath = module_relpath(declaration.module)
         return self.root / "tests" / relpath.with_name(f"test_{relpath.name}")
 
     def read_section(self, declaration: Declaration) -> Section | None:
@@ -308,5 +308,6 @@ def _end_marker(key: str) -> str:
     return f"# === jiti:end {key} ==="
 
 
-def _module_relpath(module: str) -> Path:
+def module_relpath(module: str) -> Path:
+    """The companion-relative path for a dotted module: `app.text` → `app/text.py`."""
     return Path(*module.split(".")).with_suffix(".py")
