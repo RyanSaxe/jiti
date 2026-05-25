@@ -3,7 +3,7 @@
 > Declare a function by its **typed interface**; an LLM writes, tests, and caches a real
 > implementation — committed Python you can read, edit, type-check, and own.
 
-[![CI](https://github.com/ryansaxe/jiti/actions/workflows/ci.yml/badge.svg)](https://github.com/ryansaxe/jiti/actions/workflows/ci.yml)
+[![CI](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml/badge.svg)](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Types: ty](https://img.shields.io/badge/types-ty-261230)
@@ -57,7 +57,7 @@ generates real code **once** and then gets out of the way.
 Requires **Python 3.13+**. jiti is not on PyPI yet — install from source:
 
 ```bash
-git clone https://github.com/ryansaxe/jiti && cd jiti
+git clone https://github.com/RyanSaxe/jiti && cd jiti
 uv pip install -e .          # or: pip install -e .
 ```
 
@@ -253,7 +253,7 @@ regenerates next run.
 ## Development
 
 ```bash
-git clone https://github.com/ryansaxe/jiti && cd jiti
+git clone https://github.com/RyanSaxe/jiti && cd jiti
 uv sync                      # install runtime + dev dependencies
 uv run pre-commit install    # install the git hooks
 ```
