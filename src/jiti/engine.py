@@ -17,8 +17,8 @@ from typing import Any
 from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
+from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE
 from jiti.store import Action, JitiStore
-from jiti.style import resolve_style
 from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 
 DEFAULT_MODEL = "claude-opus-4-7"
@@ -40,7 +40,8 @@ class Engine:
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_turns: int = DEFAULT_MAX_TURNS
-    style: str = field(default_factory=resolve_style)
+    style: str = STYLE_GUIDE
+    test_guide: str = TEST_GUIDE
     _in_progress: set[str] = field(default_factory=set)
 
     def implement(
@@ -108,13 +109,20 @@ class Engine:
         return total_cost
 
     def _system_blocks(self) -> list[dict[str, Any]]:
-        # The house style is a separate cached block so jiti's mechanical rules stay cacheable
-        # independent of whichever style guide is in effect.
-        blocks = [{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        # Style and test guidance are separate cached blocks so jiti's mechanical rules stay
+        # cacheable independent of whichever guides are in effect.
+        blocks = [_cached(SYSTEM_PROMPT)]
         if self.style.strip():
-            framed = f"Follow this house style in the code you write:\n\n{self.style}"
-            blocks.append({"type": "text", "text": framed, "cache_control": {"type": "ephemeral"}})
+            house_style = f"Follow this house style in the code you write:\n\n{self.style}"
+            blocks.append(_cached(house_style))
+        if self.test_guide.strip():
+            guidance = f"Follow this guidance when writing tests:\n\n{self.test_guide}"
+            blocks.append(_cached(guidance))
         return blocks
+
+
+def _cached(text: str) -> dict[str, Any]:
+    return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
 def _is_tool_use(block: Any) -> bool:
@@ -202,23 +210,3 @@ def _test_instruction(declaration: Declaration) -> list[str]:
         f"Tests are named test_* functions that call `{declaration.name}` by its BARE name",
         "(it shares their namespace during validation; do not import it).",
     ]
-
-
-_SYSTEM = """You are jiti's code-generation agent. You implement ONE Python function from \
-its interface, then prove it works — this is committed source, not a sketch.
-
-You run INSIDE the live process at the call site. Use your tools:
-- inspect(expr): read the real arguments (by parameter name) and module globals.
-- run_python(code): experiment against deep copies of the real arguments.
-- read_file(path) / grep(pattern): explore the codebase for conventions and helpers.
-- submit(impl, tests): validate a candidate (ruff + ty + your tests, run in-process). \
-Iterate until it returns PASSED, then stop.
-
-Rules:
-- Write real, idiomatic, correct Python.
-- The implementation must define exactly the target function with the given signature, plus \
-any PRIVATE helpers (prefix them `_<name>__`).
-- Write named `test_*` functions covering real behavior and edge cases; the task says how to \
-call the target.
-- Do not emit `from __future__` imports.
-- Assume the function is pure (no side effects)."""

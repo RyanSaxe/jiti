@@ -1,4 +1,4 @@
-"""Style-guide resolution precedence and its injection into the generation prompt."""
+"""Prompt-guide resolution precedence and injection of style/test guidance into the prompt."""
 
 import tempfile
 from pathlib import Path
@@ -9,44 +9,44 @@ import pytest
 from jiti.declaration import introspect
 from jiti.engine import Engine
 from jiti.errors import GenerationError
+from jiti.prompts import STYLE_ENV, STYLE_FILE, _bundled, _resolve
 from jiti.store import JitiStore
-from jiti.style import STYLE_ENV, STYLE_FILENAME, default_style, resolve_style
 
 
 @pytest.fixture(autouse=True)
-def _no_env_style(monkeypatch):
+def _no_env(monkeypatch):
     monkeypatch.delenv(STYLE_ENV, raising=False)
 
 
 def test_bundled_default_is_returned_when_nothing_is_set(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    assert resolve_style() == default_style()
-    assert default_style().strip()
+    assert _resolve("style.md", STYLE_ENV, STYLE_FILE) == _bundled("style.md")
+    assert _bundled("style.md").strip()
 
 
 def test_project_file_overrides_the_bundled_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / STYLE_FILENAME).write_text("project house style")
+    (tmp_path / STYLE_FILE).write_text("project house style")
 
-    assert resolve_style() == "project house style"
+    assert _resolve("style.md", STYLE_ENV, STYLE_FILE) == "project house style"
 
 
 def test_env_var_path_wins_over_the_project_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / STYLE_FILENAME).write_text("project house style")
+    (tmp_path / STYLE_FILE).write_text("project house style")
     override = tmp_path / "custom.md"
     override.write_text("env house style")
     monkeypatch.setenv(STYLE_ENV, str(override))
 
-    assert resolve_style() == "env house style"
+    assert _resolve("style.md", STYLE_ENV, STYLE_FILE) == "env house style"
 
 
 def test_missing_env_var_path_raises(monkeypatch):
     monkeypatch.setenv(STYLE_ENV, "/no/such/style.md")
 
     with pytest.raises(FileNotFoundError):
-        resolve_style()
+        _resolve("style.md", STYLE_ENV, STYLE_FILE)
 
 
 class CapturingClient:
@@ -73,9 +73,14 @@ def stub(text: str) -> str:
     ...
 
 
-def _captured_system(style: str) -> Any:
+def _captured_system(*, style: str, test_guide: str) -> Any:
     client = CapturingClient()
-    engine = Engine(client=client, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"), style=style)
+    engine = Engine(
+        client=client,
+        store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"),
+        style=style,
+        test_guide=test_guide,
+    )
     # The capturing client never submits, so generation fails — but only after the first
     # `messages.create`, by which point the system prompt is recorded.
     with pytest.raises(GenerationError):
@@ -83,12 +88,13 @@ def _captured_system(style: str) -> Any:
     return client.system
 
 
-def test_style_is_injected_as_a_system_block():
-    system = _captured_system("ZZZ-marker-style")
+def test_style_and_test_guidance_are_injected_as_blocks():
+    system = _captured_system(style="ZZZ-style-marker", test_guide="QQQ-test-marker")
 
     texts = "".join(block["text"] for block in system)
-    assert "ZZZ-marker-style" in texts
+    assert "ZZZ-style-marker" in texts
+    assert "QQQ-test-marker" in texts
 
 
-def test_empty_style_adds_no_second_block():
-    assert len(_captured_system("   ")) == 1
+def test_empty_guides_add_no_extra_blocks():
+    assert len(_captured_system(style="  ", test_guide="")) == 1
