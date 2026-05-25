@@ -1,0 +1,42 @@
+"""Shared fake Anthropic client for engine tests — canned tool-use responses, no network."""
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class Block:
+    type: str
+    id: str = ""
+    name: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
+    text: str = ""
+
+
+@dataclass
+class Response:
+    content: list[Block]
+
+
+class ScriptedClient:
+    """Returns canned responses in order; only `messages.create(...)` is used."""
+
+    def __init__(self, script: list[Response]) -> None:
+        self.script = script
+        self.calls = 0
+
+    @property
+    def messages(self) -> "ScriptedClient":
+        return self
+
+    def create(self, **kwargs: Any) -> Response:
+        response = self.script[self.calls]
+        self.calls += 1
+        return response
+
+
+def submit(name: str, impl: str, tests: str) -> Response:
+    use = Block(
+        type="tool_use", id=f"t-{name}", name="submit", input={"impl": impl, "tests": tests}
+    )
+    return Response(content=[use])

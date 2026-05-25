@@ -22,6 +22,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import NamedTuple, cast
 
+from jiti.declaration import Gate
 from jiti.errors import JitiError
 
 # Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
@@ -68,12 +69,17 @@ def validate(
     *,
     import_path: Sequence[str] = (),
     patch: MethodPatch | None = None,
+    name: str = "",
+    gates: Sequence[Gate] = (),
 ) -> ValidationResult:
     """Lint, type-check, and run a candidate's tests; return checks and the formatted source.
 
     For a free function, `test_source` calls it by bare name (impl and tests share one
     namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
     onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
+
+    `gates` are live human tests (from `jiti.required_for`); each is run with the target name
+    `name` rebound in its globals to the candidate, so it exercises the candidate, not the stub.
     """
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -83,20 +89,61 @@ def validate(
         checks = (
             _lint("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
-            _run_tests(formatted, test_source, patch),
+            *_run_tests(formatted, test_source, patch, name, gates),
         )
     return ValidationResult(checks=checks, impl_source=formatted)
 
 
-def _run_tests(impl_source: str, test_source: str, patch: MethodPatch | None) -> Check:
+def _run_tests(
+    impl_source: str,
+    test_source: str,
+    patch: MethodPatch | None,
+    name: str,
+    gates: Sequence[Gate],
+) -> tuple[Check, ...]:
     namespace: dict[str, object] = {}
     try:
         exec(compile(impl_source, "<jiti-candidate>", "exec"), namespace)
         exec(compile(test_source, "<jiti-candidate-tests>", "exec"), namespace)
     except Exception:
-        return Check("tests", ok=False, output=cap(traceback.format_exc()))
+        return (Check("tests", ok=False, output=cap(traceback.format_exc())),)
     with _candidate_method(namespace, patch):
-        return _call_tests(namespace)
+        tests = _call_tests(namespace)
+        if not gates:
+            return (tests,)
+        return (tests, _run_gates(namespace.get(name), gates))
+
+
+def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
+    if not callable(candidate):
+        return Check("gates", ok=False, output="the implementation did not define the target.")
+    failures: list[str] = []
+    for gate in gates:
+        with _rebound(gate, candidate):
+            try:
+                _run_gate(gate)
+            except JitiError:
+                raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
+            except Exception:
+                failures.append(f"{gate.name}:\n{traceback.format_exc()}")
+    return Check("gates", ok=not failures, output=cap("\n\n".join(failures)))
+
+
+def _run_gate(gate: Gate) -> None:
+    if gate.test is not None:
+        gate.test()
+
+
+@contextmanager
+def _rebound(gate: Gate, candidate: object) -> Iterator[None]:
+    """Point every global in the gate test that references its target at the candidate instead."""
+    namespace = gate.test.__globals__ if gate.test else {}
+    saved = {key: value for key, value in namespace.items() if value is gate.target}
+    namespace.update(dict.fromkeys(saved, candidate))
+    try:
+        yield
+    finally:
+        namespace.update(saved)
 
 
 @contextmanager

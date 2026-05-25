@@ -15,8 +15,10 @@ import io
 import textwrap
 import tokenize
 import types
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from jiti.errors import JitiError, RealBodyError
 
@@ -44,6 +46,22 @@ class ClassContext:
 
 
 @dataclass(frozen=True)
+class Gate:
+    """A test registered via `jiti.required_for` as part of a target's definition of done."""
+
+    name: str
+    kind: Literal["human", "jiti"]
+    spec: str
+    """Human gate: the test's source. jiti-test: its docstring (the generation spec)."""
+
+    test: types.FunctionType | None = None
+    """The live human test to run against a candidate; None for an ungenerated jiti-test."""
+
+    target: Callable[..., object] | None = None
+    """The target wrapper, used to rebind it to the candidate inside the test's globals."""
+
+
+@dataclass(frozen=True)
 class Declaration:
     """The canonical interface jiti generates against."""
 
@@ -55,6 +73,7 @@ class Declaration:
     hint: str | None
     available_symbols: tuple[str, ...]
     class_context: ClassContext | None
+    gates: tuple[Gate, ...] = ()
 
     @property
     def body_mode(self) -> BodyMode:
@@ -71,7 +90,9 @@ class Declaration:
         return _spec_hash(self)
 
 
-def introspect(func: types.FunctionType, owner: type | None = None) -> Declaration:
+def introspect(
+    func: types.FunctionType, owner: type | None = None, gates: tuple[Gate, ...] = ()
+) -> Declaration:
     """Build a `Declaration` from a stub function and (for methods) its owner class.
 
     Raises `RealBodyError` if the stub already has a real implementation.
@@ -86,7 +107,23 @@ def introspect(func: types.FunctionType, owner: type | None = None) -> Declarati
         hint=analyze_body(func),
         available_symbols=_module_symbols(func),
         class_context=class_context,
+        gates=gates,
     )
+
+
+def is_stub(func: types.FunctionType) -> bool:
+    """True if the body is only a docstring and placeholders (`...`, `pass`, `raise`)."""
+    source = textwrap.dedent(inspect.getsource(func))
+    node = _function_node(source, func.__name__)
+    return all(_is_placeholder(statement) for statement in _body_without_docstring(node))
+
+
+def gate_for(test: types.FunctionType, target: Callable[..., object]) -> Gate:
+    """Build a `Gate` from a `required_for` test — human if it has a body, jiti if it's a stub."""
+    if is_stub(test):
+        raise NotImplementedError("jiti-test stubs via required_for are coming next.")
+    source = textwrap.dedent(inspect.getsource(test))
+    return Gate(name=test.__name__, kind="human", spec=source, test=test, target=target)
 
 
 def _signature(func: types.FunctionType) -> inspect.Signature:
@@ -236,4 +273,5 @@ def _spec_hash(declaration: Declaration) -> str:
         parts.append(declaration.class_context.name)
         parts.extend(f"{name}:{type_}" for name, type_ in declaration.class_context.attributes)
         parts.extend(f"{name}{sig}" for name, sig in declaration.class_context.methods)
+    parts.extend(f"{gate.kind}:{gate.name}:{gate.spec}" for gate in declaration.gates)
     return short_hash("\x00".join(parts))

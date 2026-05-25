@@ -1,56 +1,16 @@
 """The agent engine: generation, caching, retry, the cycle guard, and cascade — fake client."""
 
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
+from fakes import ScriptedClient, submit
 
 from jiti import jiti
 from jiti.declaration import introspect
 from jiti.engine import Engine
 from jiti.errors import GenerationCycleError
 from jiti.store import JitiStore
-
-
-@dataclass
-class Block:
-    type: str
-    id: str = ""
-    name: str = ""
-    input: dict[str, Any] = field(default_factory=dict)
-    text: str = ""
-
-
-@dataclass
-class Response:
-    content: list[Block]
-
-
-class ScriptedClient:
-    """Returns canned responses in order; only `messages.create(...)` is used."""
-
-    def __init__(self, script: list[Response]) -> None:
-        self.script = script
-        self.calls = 0
-
-    @property
-    def messages(self) -> "ScriptedClient":
-        return self
-
-    def create(self, **kwargs: Any) -> Response:
-        response = self.script[self.calls]
-        self.calls += 1
-        return response
-
-
-def submit(name: str, impl: str, tests: str) -> Response:
-    use = Block(
-        type="tool_use", id=f"t-{name}", name="submit", input={"impl": impl, "tests": tests}
-    )
-    return Response(content=[use])
-
 
 GOOD_IMPL = "def slugify(text):\n    return text.lower().replace(' ', '-')"
 BAD_IMPL = "def slugify(text):\n    return text.upper()"

@@ -133,7 +133,15 @@ class CallContext:
         patch = None
         if self.declaration.class_context is not None:
             patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
-        result = validate(impl, tests, import_path=self.import_path, patch=patch)
+        gates = tuple(gate for gate in self.declaration.gates if gate.kind == "human")
+        result = validate(
+            impl,
+            tests,
+            import_path=self.import_path,
+            patch=patch,
+            name=self.declaration.name,
+            gates=gates,
+        )
         if result.ok:
             self.passing = (result.impl_source, tests)
             return "PASSED — ruff, ty, and tests are all green."

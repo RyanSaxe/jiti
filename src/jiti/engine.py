@@ -15,7 +15,7 @@ from time import perf_counter
 from typing import Any
 
 from jiti._log import cost, log_done, log_llm_call, log_start
-from jiti.declaration import ClassContext, Declaration
+from jiti.declaration import ClassContext, Declaration, Gate
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE
 from jiti.store import Action, JitiStore
@@ -185,8 +185,21 @@ def _task_prompt(declaration: Declaration) -> str:
     )
     lines.append("")
     lines.extend(_test_instruction(declaration))
+    gate_section = _gate_section(declaration.gates)
+    if gate_section:
+        lines.append(gate_section)
     lines.append("Inspect the real arguments first, then implement and submit until it passes.")
     return "\n".join(lines)
+
+
+def _gate_section(gates: tuple[Gate, ...]) -> str | None:
+    human = [gate.spec for gate in gates if gate.kind == "human"]
+    if not human:
+        return None
+    return (
+        "These author tests are part of the definition of done — your implementation will be run "
+        "against them and must pass:\n" + "\n\n".join(human)
+    )
 
 
 def _class_section(context: ClassContext) -> str:
