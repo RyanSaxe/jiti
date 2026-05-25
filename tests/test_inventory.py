@@ -44,6 +44,16 @@ def test_inventory_excludes_the_tests_subtree(tmp_path):
     assert all("tests" not in ref.impl_path.parts for ref in inventory(root))
 
 
+def test_inventory_handles_a_root_reached_through_a_symlink(tmp_path):
+    real = tmp_path / "real"
+    _write_section(real / ".jiti", "app.text", "slugify")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    # walk_py_files resolves paths; passing an unresolved (symlinked) root must still work.
+    assert [ref.key for ref in inventory(link / ".jiti")] == ["app.text.slugify"]
+
+
 def test_select_by_exact_qualname(tmp_path):
     root = tmp_path / ".jiti"
     _write_section(root, "app.text", "slugify")

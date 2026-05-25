@@ -182,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("clear", help="delete the .jiti/ mirror")
 
     args = parser.parse_args(argv)
+    args.root = args.root.resolve()  # so paths compare cleanly through symlinks (e.g. /tmp)
     try:
         return _dispatch(args)
     except JitiError as error:

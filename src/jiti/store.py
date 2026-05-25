@@ -374,6 +374,7 @@ class SectionRef:
 
 def inventory(root: Path) -> list[SectionRef]:
     """Every generated impl section in the mirror (the `tests/` subtree is excluded)."""
+    root = root.resolve()  # walk_py_files resolves paths; keep root comparable to them
     tests_dir = root / "tests"
     refs: list[SectionRef] = []
     for path in sorted(walk_py_files(root)):
