@@ -24,78 +24,65 @@ from jiti.declaration import Declaration, Gate
 from jiti.errors import JitiError
 from jiti.validate import MethodPatch, cap, validate
 
-TOOL_SCHEMAS: list[dict[str, Any]] = [
-    {
-        "name": "inspect",
-        "description": (
-            "Evaluate a Python expression against the LIVE call (its real arguments, by "
-            "parameter name, plus the function's module globals) and return the value's type "
-            "and repr. Read-only — use it to learn the real shape of the inputs."
-        ),
+
+def _tool(name: str, description: str, **properties: dict[str, str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description,
         "input_schema": {
             "type": "object",
-            "properties": {"expr": {"type": "string", "description": "Expression to evaluate."}},
-            "required": ["expr"],
+            "properties": properties,
+            "required": list(properties),
         },
+    }
+
+
+_INSPECT = _tool(
+    "inspect",
+    "Evaluate a Python expression against the LIVE call (its real arguments, by parameter name, "
+    "plus the function's module globals) and return the value's type and repr. Read-only — use "
+    "it to learn the real shape of the inputs.",
+    expr={"type": "string", "description": "Expression to evaluate."},
+)
+_RUN_PYTHON = _tool(
+    "run_python",
+    "Execute Python in a scratch namespace seeded with DEEP COPIES of the real arguments (by "
+    "parameter name) and the module globals. Print what you want to see. Use it to experiment "
+    "with a candidate approach against realistic data.",
+    code={"type": "string", "description": "Code to execute."},
+)
+_READ_FILE = _tool(
+    "read_file",
+    "Read a project file (e.g. an already-generated sibling).",
+    path={"type": "string"},
+)
+_GREP = _tool(
+    "grep",
+    "Search the project's Python files for a regex pattern.",
+    pattern={"type": "string"},
+)
+_SUBMIT = _tool(
+    "submit",
+    "Validate a candidate: ruff + ty on the implementation, then run the tests in-process. "
+    "`tests` reference the function by its bare name. Returns PASSED or the failures to fix. "
+    "Submit repeatedly until it passes; the last passing one is kept.",
+    impl={"type": "string", "description": "The implementation module source."},
+    tests={"type": "string", "description": "Named test_* functions, bare-name calls."},
+    quality={
+        "type": "integer",
+        "description": "Your honest 0-10 rating of the code's quality (readability, structure, "
+        "simplicity). A low rating earns one refactor pass before commit.",
     },
-    {
-        "name": "run_python",
-        "description": (
-            "Execute Python in a scratch namespace seeded with DEEP COPIES of the real "
-            "arguments (by parameter name) and the module globals. Print what you want to see. "
-            "Use it to experiment with a candidate approach against realistic data."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"code": {"type": "string", "description": "Code to execute."}},
-            "required": ["code"],
-        },
-    },
-    {
-        "name": "read_file",
-        "description": "Read a project file (e.g. an already-generated sibling).",
-        "input_schema": {
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "grep",
-        "description": "Search the project's Python files for a regex pattern.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"pattern": {"type": "string"}},
-            "required": ["pattern"],
-        },
-    },
-    {
-        "name": "submit",
-        "description": (
-            "Validate a candidate: ruff + ty on the implementation, then run the tests "
-            "in-process. `tests` reference the function by its bare name. Returns PASSED or the "
-            "failures to fix. Submit repeatedly until it passes; the last passing one is kept."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "impl": {"type": "string", "description": "The implementation module source."},
-                "tests": {
-                    "type": "string",
-                    "description": "Named test_* functions, bare-name calls.",
-                },
-                "quality": {
-                    "type": "integer",
-                    "description": (
-                        "Your honest 0-10 rating of the code's quality (readability, structure, "
-                        "simplicity). Below the threshold earns one refactor pass before commit."
-                    ),
-                },
-            },
-            "required": ["impl", "tests", "quality"],
-        },
-    },
-]
+)
+_SUBMIT_TEST = _tool(
+    "submit_test",
+    "Validate a candidate test: ruff + ty only (the target isn't implemented yet, so it can't "
+    "be run). Returns PASSED or the failures to fix. Submit repeatedly until it passes.",
+    impl={"type": "string", "description": "The test function's source (import the target)."},
+)
+
+IMPL_TOOLS: list[dict[str, Any]] = [_INSPECT, _RUN_PYTHON, _READ_FILE, _GREP, _SUBMIT]
+TEST_TOOLS: list[dict[str, Any]] = [_READ_FILE, _GREP, _SUBMIT_TEST]
 
 
 @dataclass
@@ -106,13 +93,10 @@ class CallContext:
     args: tuple[object, ...]
     kwargs: dict[str, object]
     import_path: tuple[str, ...] = ()
-    mode: str = "impl"
     gates: tuple[Gate, ...] = ()
-    quality_threshold: int = 7
-    max_refactor: int = 1
     passing: tuple[str, str] | None = None
-    refactors_used: int = 0
-    done: bool = False
+    quality: int = 10
+    """The last passing candidate's self-reported quality; the engine loop reads it for refactor."""
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
@@ -143,13 +127,6 @@ class CallContext:
         return cap(found) or "(no matches)"
 
     def submit(self, impl: str, tests: str, quality: int = 10) -> str:
-        if self.mode == "test":
-            result = validate(impl, "", import_path=self.import_path, execute=False)
-            if result.ok:
-                self.passing = (result.impl_source, "")
-                self.done = True
-                return "PASSED — ruff and ty are green."
-            return f"FAILED:\n{result.report}"
         patch = None
         if self.declaration.class_context is not None:
             patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
@@ -164,14 +141,15 @@ class CallContext:
         if not result.ok:
             return f"FAILED:\n{result.report}"
         self.passing = (result.impl_source, tests)
-        if quality >= self.quality_threshold or self.refactors_used >= self.max_refactor:
-            self.done = True
-            return "PASSED — ruff, ty, and tests are all green."
-        self.refactors_used += 1
-        return (
-            f"PASSED, but you rated quality {quality} < {self.quality_threshold}. Refactor for "
-            "readability, structure, and simplicity while keeping every test green, then resubmit."
-        )
+        self.quality = quality
+        return "PASSED — ruff, ty, and tests are all green."
+
+    def submit_test(self, impl: str) -> str:
+        result = validate(impl, "", import_path=self.import_path, execute=False)
+        if not result.ok:
+            return f"FAILED:\n{result.report}"
+        self.passing = (result.impl_source, "")
+        return "PASSED — ruff and ty are green."
 
     def _bound_args(self) -> dict[str, object]:
         try:

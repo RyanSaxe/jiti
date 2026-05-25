@@ -20,7 +20,7 @@ from jiti.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.store import Action, JitiStore, scratch_rename
-from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
+from jiti.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 
 DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_MAX_TOKENS = 8192
@@ -77,15 +77,16 @@ class Engine:
         try:
             gates = self._prepare_gates(declaration)
             context = CallContext(
-                declaration,
-                args,
-                kwargs,
-                import_path=_import_path(declaration),
-                gates=gates,
-                quality_threshold=self.quality_threshold,
+                declaration, args, kwargs, import_path=_import_path(declaration), gates=gates
+            )
+            total_cost = self._run_agent(
+                context,
+                self._system_blocks(),
+                _task_prompt(declaration),
+                IMPL_TOOLS,
+                threshold=self.quality_threshold,
                 max_refactor=self.max_refactor,
             )
-            total_cost = self._run_agent(context, self._system_blocks(), _task_prompt(declaration))
             if context.passing is None:
                 raise GenerationError(
                     f"{key}: the agent finished without an implementation that passes validation."
@@ -108,9 +109,12 @@ class Engine:
         log_start(key, depth)
         started = perf_counter()
         try:
-            context = CallContext(test, (), {}, import_path=_import_path(test), mode="test")
+            context = CallContext(test, (), {}, import_path=_import_path(test))
             task = _test_task_prompt(test, target)
-            cost_ = self._run_agent(context, self._test_system_blocks(), task)
+            # threshold=0 → no refactor pass for tests (red→green→refactor is for the impl).
+            cost_ = self._run_agent(
+                context, self._test_system_blocks(), task, TEST_TOOLS, threshold=0, max_refactor=0
+            )
             if context.passing is None:
                 raise GenerationError(f"{key}: the agent finished without a passing test.")
             body, _ = context.passing
@@ -137,17 +141,27 @@ class Engine:
             runnable.append(Gate(gate.name, "jiti", gate.spec, test=loaded, target=gate.target))
         return tuple(runnable)
 
-    def _run_agent(self, context: CallContext, system: list[dict[str, Any]], task: str) -> float:
+    def _run_agent(
+        self,
+        context: CallContext,
+        system: list[dict[str, Any]],
+        task: str,
+        tools: list[dict[str, Any]],
+        *,
+        threshold: int,
+        max_refactor: int,
+    ) -> float:
         depth = len(self._in_progress)
         messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
         total_cost = 0.0
+        refactors = 0
         for turn in range(1, self.max_turns + 1):
             started = perf_counter()
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
                 system=system,
-                tools=TOOL_SCHEMAS,
+                tools=tools,
                 messages=messages,
             )
             usage = getattr(response, "usage", None)
@@ -159,8 +173,11 @@ class Engine:
             if not tool_uses:
                 return total_cost
             results = [_tool_result(context, block) for block in tool_uses]
-            if context.done:
-                return total_cost  # green (and quality cleared) — skip the model's wrap-up turn
+            if context.passing is not None:
+                if context.quality >= threshold or refactors >= max_refactor:
+                    return total_cost  # green and polished enough — skip the model's wrap-up turn
+                refactors += 1
+                results.append(_refactor_nudge(context.quality, threshold))
             messages.append({"role": "user", "content": results})
         return total_cost
 
@@ -185,6 +202,16 @@ class Engine:
 
 def _cached(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+
+
+def _refactor_nudge(quality: int, threshold: int) -> dict[str, Any]:
+    return {
+        "type": "text",
+        "text": (
+            f"That passes, but you rated quality {quality} < {threshold}. Refactor for "
+            "readability, structure, and simplicity while keeping every test green, then resubmit."
+        ),
+    }
 
 
 def _is_tool_use(block: Any) -> bool:

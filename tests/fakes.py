@@ -41,3 +41,8 @@ def submit(name: str, impl: str, tests: str, quality: int | None = None) -> Resp
         payload["quality"] = quality
     use = Block(type="tool_use", id=f"t-{name}", name="submit", input=payload)
     return Response(content=[use])
+
+
+def submit_test(name: str, impl: str) -> Response:
+    use = Block(type="tool_use", id=f"t-{name}", name="submit_test", input={"impl": impl})
+    return Response(content=[use])
