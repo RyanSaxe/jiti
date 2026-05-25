@@ -6,12 +6,27 @@ readme = "README.md"
 authors = [
     { name = "Ryan Saxe", email = "ryancsaxe+1@gmail.com" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
+keywords = ["llm", "codegen", "ai", "anthropic", "claude", "tdd", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 dependencies = [
     "anthropic>=0.104.1",
     "ruff>=0.15.14",
     "ty>=0.0.39",
 ]
+
+[project.urls]
+Homepage = "https://github.com/RyanSaxe/jiti"
+Repository = "https://github.com/RyanSaxe/jiti"
+Issues = "https://github.com/RyanSaxe/jiti/issues"
 
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]
