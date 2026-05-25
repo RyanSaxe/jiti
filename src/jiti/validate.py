@@ -30,6 +30,20 @@ RUFF = (sys.executable, "-m", "ruff")
 TY = (sys.executable, "-m", "ty")
 
 
+def _test_failures() -> tuple[type[BaseException], ...]:
+    # A failing test raises `Exception` (e.g. AssertionError), but pytest signals some failures
+    # (a `pytest.raises` that didn't raise) via BaseException subclasses a plain `except Exception`
+    # would miss. Catch those too when pytest is importable (it always is during generation).
+    try:
+        import pytest
+    except ImportError:
+        return (Exception,)
+    return (Exception, pytest.fail.Exception, pytest.skip.Exception, pytest.xfail.Exception)
+
+
+_TEST_FAILURES = _test_failures()
+
+
 class MethodPatch(NamedTuple):
     """The class and method to temporarily bind a candidate onto during method validation."""
 
@@ -131,7 +145,7 @@ def _run_gates(candidate: object, name: str, module: str, gates: Sequence[Gate])
                     gate.test()
             except JitiError:
                 raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
-            except Exception:
+            except _TEST_FAILURES:
                 failures.append(f"{gate.name}:\n{traceback.format_exc()}")
     return Check("gates", ok=not failures, output=cap("\n\n".join(failures)))
 
@@ -201,7 +215,7 @@ def _call_tests(namespace: dict[str, object]) -> Check:
             cast("Callable[[], object]", value)()
         except JitiError:
             raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
-        except Exception:
+        except _TEST_FAILURES:
             failures.append(f"{name}:\n{traceback.format_exc()}")
     if not ran_any:
         return Check("tests", ok=False, output="no test_* functions were defined")
