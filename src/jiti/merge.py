@@ -13,9 +13,12 @@ import ast
 import os
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
+from jiti.discovery import module_name, walk_py_files
 from jiti.errors import MergeError
+from jiti.store import SectionRef
 from jiti.validate import RUFF
 
 
@@ -51,6 +54,36 @@ def write_source(path: Path, text: str) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def source_files(root: Path) -> dict[str, Path]:
+    """Map each importable module in the project to its source file (excludes the mirror)."""
+    mapping: dict[str, Path] = {}
+    for path in walk_py_files(root):
+        name, _ = module_name(path)
+        mapping.setdefault(name, path)
+    return mapping
+
+
+def select(targets: Sequence[str], refs: Sequence[SectionRef]) -> list[SectionRef]:
+    """Resolve user targets (file path, dotted module, or qualname) to the sections they name."""
+    chosen: dict[str, SectionRef] = {}
+    for target in targets:
+        matches = _match(target, refs)
+        if not matches:
+            raise MergeError(f"no generated section matched '{target}' — try `jiti status`.")
+        chosen.update((ref.key, ref) for ref in matches)
+    return list(chosen.values())
+
+
+def _match(target: str, refs: Sequence[SectionRef]) -> list[SectionRef]:
+    if target.endswith(".py") or os.sep in target or Path(target).exists():
+        module, _ = module_name(Path(target).resolve())
+        return [ref for ref in refs if ref.module == module]
+    exact = [ref for ref in refs if ref.key == target]
+    if exact:
+        return exact
+    return [ref for ref in refs if ref.module == target or ref.key.startswith(f"{target}.")]
 
 
 def _find_jiti_def(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
