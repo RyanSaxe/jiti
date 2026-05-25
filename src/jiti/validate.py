@@ -71,26 +71,30 @@ def validate(
     patch: MethodPatch | None = None,
     name: str = "",
     gates: Sequence[Gate] = (),
+    execute: bool = True,
 ) -> ValidationResult:
-    """Lint, type-check, and run a candidate's tests; return checks and the formatted source.
+    """Lint, type-check, and (unless `execute` is False) run a candidate's tests.
 
     For a free function, `test_source` calls it by bare name (impl and tests share one
     namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
     onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
 
-    `gates` are live human tests (from `jiti.required_for`); each is run with the target name
-    `name` rebound in its globals to the candidate, so it exercises the candidate, not the stub.
+    `gates` are live tests (from `jiti.required_for`); each is run with the target `name`
+    rebound in its globals to the candidate, so it exercises the candidate, not the stub.
+    `execute=False` (test-mode) lints and type-checks only — used when generating a test
+    against a not-yet-implemented target, which therefore cannot be run.
     """
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         impl_file = workdir / "candidate.py"
         impl_file.write_text(impl_source)
         formatted = _format(impl_file)
-        checks = (
+        lint = (
             _lint("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
-            *_run_tests(formatted, test_source, patch, name, gates),
         )
+        tests = _run_tests(formatted, test_source, patch, name, gates) if execute else ()
+        checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
 
 

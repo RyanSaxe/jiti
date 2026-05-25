@@ -37,5 +37,6 @@ def _resolve(bundled_name: str, env: str, project_file: str) -> str:
 
 
 SYSTEM_PROMPT = _bundled("system.md")
+TEST_MODE_PROMPT = _bundled("test_mode.md")
 STYLE_GUIDE = _resolve("style.md", STYLE_ENV, STYLE_FILE)
 TEST_GUIDE = _resolve("tests.md", TESTS_ENV, TESTS_FILE)

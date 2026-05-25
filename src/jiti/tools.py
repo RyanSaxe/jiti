@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from jiti._log import logger
-from jiti.declaration import Declaration
+from jiti.declaration import Declaration, Gate
 from jiti.errors import JitiError
 from jiti.validate import MethodPatch, cap, validate
 
@@ -99,6 +99,8 @@ class CallContext:
     args: tuple[object, ...]
     kwargs: dict[str, object]
     import_path: tuple[str, ...] = ()
+    mode: str = "impl"
+    gates: tuple[Gate, ...] = ()
     passing: tuple[str, str] | None = None
 
     def inspect(self, expr: str) -> str:
@@ -130,17 +132,22 @@ class CallContext:
         return cap(found) or "(no matches)"
 
     def submit(self, impl: str, tests: str) -> str:
+        if self.mode == "test":
+            result = validate(impl, "", import_path=self.import_path, execute=False)
+            if result.ok:
+                self.passing = (result.impl_source, "")
+                return "PASSED — ruff and ty are green."
+            return f"FAILED:\n{result.report}"
         patch = None
         if self.declaration.class_context is not None:
             patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
-        gates = tuple(gate for gate in self.declaration.gates if gate.kind == "human")
         result = validate(
             impl,
             tests,
             import_path=self.import_path,
             patch=patch,
             name=self.declaration.name,
-            gates=gates,
+            gates=self.gates,
         )
         if result.ok:
             self.passing = (result.impl_source, tests)

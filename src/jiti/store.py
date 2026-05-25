@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -128,7 +129,27 @@ class JitiStore:
 
     def load(self, declaration: Declaration) -> Callable[..., Any]:
         """Compile the companion fresh (no bytecode cache) and return the declared function."""
-        path = self.impl_path(declaration)
+        return self._load(self.impl_path(declaration), declaration)
+
+    def read_test_section(self, declaration: Declaration) -> Section | None:
+        try:
+            text = self.test_path(declaration).read_text()
+        except FileNotFoundError:
+            return None
+        return parse_sections(text).get(declaration.key)
+
+    def write_test(self, declaration: Declaration, body: str) -> Section:
+        """Persist a generated jiti-test body as a section in the test file (no impl section)."""
+        imports, code = _split_imports(body)
+        section = Section(declaration.key, declaration.spec_hash, content_hash(code), code)
+        self._upsert(self.test_path(declaration), section, imports)
+        return section
+
+    def load_test(self, declaration: Declaration) -> types.FunctionType:
+        """Compile the committed test file and return the generated test function."""
+        return self._load(self.test_path(declaration), declaration)
+
+    def _load(self, path: Path, declaration: Declaration) -> types.FunctionType:
         namespace: dict[str, Any] = {
             "__name__": f"_jiti.{declaration.module}",
             "__file__": str(path),

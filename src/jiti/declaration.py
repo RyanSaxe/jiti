@@ -121,7 +121,8 @@ def is_stub(func: types.FunctionType) -> bool:
 def gate_for(test: types.FunctionType, target: Callable[..., object]) -> Gate:
     """Build a `Gate` from a `required_for` test — human if it has a body, jiti if it's a stub."""
     if is_stub(test):
-        raise NotImplementedError("jiti-test stubs via required_for are coming next.")
+        spec = inspect.getdoc(test) or ""
+        return Gate(name=test.__name__, kind="jiti", spec=spec, test=test, target=target)
     source = textwrap.dedent(inspect.getsource(test))
     return Gate(name=test.__name__, kind="human", spec=source, test=test, target=target)
 

@@ -94,10 +94,25 @@ class _Jiti:
         def register(test: F) -> F:
             if not isinstance(test, types.FunctionType):
                 raise JitiError("jiti.required_for can only decorate a plain test function.")
-            target._gates.append(gate_for(test, target))
-            return test
+            gate = gate_for(test, target)
+            target._gates.append(gate)
+            if gate.kind == "human":
+                return test
+            return cast(F, _jiti_test_runner(test, target))
 
         return register
+
+
+def _jiti_test_runner(stub: types.FunctionType, target: _JitiCallable) -> Callable[..., Any]:
+    """Wrap a jiti-test stub so running it (e.g. under pytest) generates and runs the real test."""
+
+    @functools.wraps(stub)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        engine = target._engine or default_engine()
+        target_declaration = introspect(target._func, target._owner, tuple(target._gates))
+        return engine.run_test(introspect(stub), target_declaration)()
+
+    return run
 
 
 jiti = _Jiti()

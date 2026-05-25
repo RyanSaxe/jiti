@@ -9,15 +9,16 @@ whose wrappers re-enter this same (shared) engine. A cycle guard stops infinite 
 from __future__ import annotations
 
 import sys
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from jiti._log import cost, log_done, log_llm_call, log_start
-from jiti.declaration import ClassContext, Declaration, Gate
+from jiti.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
-from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE
+from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.store import Action, JitiStore
 from jiti.tools import TOOL_SCHEMAS, CallContext, dispatch
 
@@ -70,8 +71,11 @@ class Engine:
         log_start(key, depth)
         started = perf_counter()
         try:
-            context = CallContext(declaration, args, kwargs, import_path=_import_path(declaration))
-            total_cost = self._run_agent(declaration, context, depth)
+            gates = self._prepare_gates(declaration)
+            context = CallContext(
+                declaration, args, kwargs, import_path=_import_path(declaration), gates=gates
+            )
+            total_cost = self._run_agent(context, self._system_blocks(), _task_prompt(declaration))
             if context.passing is None:
                 raise GenerationError(
                     f"{key}: the agent finished without an implementation that passes validation."
@@ -82,9 +86,50 @@ class Engine:
         finally:
             self._in_progress.discard(key)
 
-    def _run_agent(self, declaration: Declaration, context: CallContext, depth: int) -> float:
-        system = self._system_blocks()
-        messages: list[dict[str, Any]] = [{"role": "user", "content": _task_prompt(declaration)}]
+    def generate_test(self, test: Declaration, target: Declaration) -> None:
+        """Generate a jiti-test body from `target`'s interface (TDD), validated by ruff + ty."""
+        if (section := self.store.read_test_section(test)) and section.spec_hash == test.spec_hash:
+            return
+        key = test.key
+        if key in self._in_progress:
+            raise GenerationCycleError(f"generation cycle: {key} is needed to generate itself.")
+        self._in_progress.add(key)
+        depth = len(self._in_progress)
+        log_start(key, depth)
+        started = perf_counter()
+        try:
+            context = CallContext(test, (), {}, import_path=_import_path(test), mode="test")
+            task = _test_task_prompt(test, target)
+            cost_ = self._run_agent(context, self._test_system_blocks(), task)
+            if context.passing is None:
+                raise GenerationError(f"{key}: the agent finished without a passing test.")
+            body, _ = context.passing
+            self.store.write_test(test, body)
+            log_done(key, depth, perf_counter() - started, cost_)
+        finally:
+            self._in_progress.discard(key)
+
+    def run_test(self, test: Declaration, target: Declaration) -> types.FunctionType:
+        """Ensure a jiti-test is generated, then return its committed body to run."""
+        self.generate_test(test, target)
+        return self.store.load_test(test)
+
+    def _prepare_gates(self, declaration: Declaration) -> tuple[Gate, ...]:
+        # Human gates run as-is; jiti-test gates are generated (test-mode) then loaded so both
+        # run against the candidate via the same rebinding path.
+        runnable: list[Gate] = []
+        for gate in declaration.gates:
+            if gate.kind == "human" or gate.test is None:
+                runnable.append(gate)
+                continue
+            test_decl = introspect(gate.test)
+            loaded = self.run_test(test_decl, declaration)
+            runnable.append(Gate(gate.name, "jiti", gate.spec, test=loaded, target=gate.target))
+        return tuple(runnable)
+
+    def _run_agent(self, context: CallContext, system: list[dict[str, Any]], task: str) -> float:
+        depth = len(self._in_progress)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
         total_cost = 0.0
         for turn in range(1, self.max_turns + 1):
             started = perf_counter()
@@ -96,7 +141,8 @@ class Engine:
                 messages=messages,
             )
             usage = getattr(response, "usage", None)
-            log_llm_call(declaration.key, turn, depth, perf_counter() - started, usage, self.model)
+            key = context.declaration.key
+            log_llm_call(key, turn, depth, perf_counter() - started, usage, self.model)
             total_cost += cost(self.model, usage) or 0.0
             messages.append({"role": "assistant", "content": response.content})
             tool_uses = [block for block in response.content if _is_tool_use(block)]
@@ -118,6 +164,12 @@ class Engine:
         if self.test_guide.strip():
             guidance = f"Follow this guidance when writing tests:\n\n{self.test_guide}"
             blocks.append(_cached(guidance))
+        return blocks
+
+    def _test_system_blocks(self) -> list[dict[str, Any]]:
+        blocks = [_cached(TEST_MODE_PROMPT)]
+        if self.test_guide.strip():
+            blocks.append(_cached(f"Follow this guidance when writing tests:\n\n{self.test_guide}"))
         return blocks
 
 
@@ -189,6 +241,24 @@ def _task_prompt(declaration: Declaration) -> str:
     if gate_section:
         lines.append(gate_section)
     lines.append("Inspect the real arguments first, then implement and submit until it passes.")
+    return "\n".join(lines)
+
+
+def _test_task_prompt(test: Declaration, target: Declaration) -> str:
+    lines = [
+        f"Write the test function `{test.name}`.",
+        "",
+        "It tests this target, which is NOT implemented yet — write the test against its contract:",
+        f"  def {target.name}{target.signature}",
+    ]
+    if target.docstring:
+        lines.append(f'  """{target.docstring}"""')
+    if test.docstring:
+        lines.append(f"\nThis test must verify: {test.docstring}")
+    symbols = ", ".join(target.available_symbols) or "(none)"
+    lines.append(f"\nImport the target `{target.name}` and any helpers from `{target.module}`.")
+    lines.append(f"Available symbols there: {symbols}")
+    lines.append("Submit the test as `impl` (leave `tests` empty); checked by ruff + ty only.")
     return "\n".join(lines)
 
 
