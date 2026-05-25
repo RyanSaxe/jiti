@@ -8,7 +8,7 @@ from fakes import ScriptedClient, submit
 
 from jiti import jiti
 from jiti.declaration import introspect
-from jiti.engine import Engine
+from jiti.engine import Engine, _LazyAnthropic
 from jiti.errors import GenerationCycleError
 from jiti.store import JitiStore
 
@@ -111,3 +111,11 @@ def test_method_generation():
 
     assert Counter(10).add(5) == 15
     assert _METHOD_CLIENT.calls == 1
+
+
+def test_lazy_anthropic_defers_construction_until_first_use(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    client = _LazyAnthropic()  # building the lazy client needs no key — only generation does
+
+    assert client._client is None  # the real Anthropic client isn't constructed yet

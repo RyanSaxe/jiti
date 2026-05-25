@@ -240,11 +240,30 @@ def _tool_result(context: CallContext, block: Any) -> dict[str, Any]:
     }
 
 
+class _LazyAnthropic:
+    """An Anthropic client that builds the real one on first use.
+
+    Constructing `anthropic.Anthropic()` requires an API key, but `default_engine()` runs on
+    every first `@jiti` call — including cached ones that never reach the model. Deferring the
+    construction to the first `messages` access keeps importing jiti and running committed code
+    key-free; only generation (which calls the model) needs `ANTHROPIC_API_KEY`.
+    """
+
+    def __init__(self) -> None:
+        self._client: anthropic.Anthropic | None = None
+
+    @property
+    def messages(self) -> Any:
+        if self._client is None:
+            self._client = anthropic.Anthropic()
+        return self._client.messages
+
+
 def default_engine() -> Engine:
-    """The shared engine backing bare `@jiti`, built lazily on first use (when a key is needed)."""
+    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key)."""
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = Engine(client=anthropic.Anthropic(), store=JitiStore(Path.cwd() / ".jiti"))
+        _DEFAULT = Engine(client=_LazyAnthropic(), store=JitiStore(Path.cwd() / ".jiti"))
     return _DEFAULT
 
 
