@@ -63,3 +63,15 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.semantic_release]
+# Releases are driven by conventional-commit messages (feat:, fix:, BREAKING CHANGE).
+# The version lives only in pyproject.toml; PSR stamps it, then re-syncs uv.lock.
+version_toml = ["pyproject.toml:project.version"]
+commit_parser = "conventional"
+build_command = """
+pip install uv
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+uv build
+"""
