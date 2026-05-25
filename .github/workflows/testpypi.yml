@@ -1,0 +1,36 @@
+name: TestPyPI
+
+# Manual rehearsal of the publish path against test.pypi.org — run it from the
+# Actions tab ("Run workflow"). It proves the build + OIDC Trusted Publishing +
+# upload all work without ever touching real PyPI. Requires a TestPyPI trusted
+# publisher: owner RyanSaxe, repo jiti, workflow testpypi.yml, environment testpypi.
+# (workflow_dispatch only appears once this file is on the default branch.)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  testpypi:
+    name: build and publish to TestPyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC Trusted Publishing
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/jiti/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build distributions with uv
+        run: uv build
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true # re-runs are fine; TestPyPI is also append-only per version
