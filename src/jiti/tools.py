@@ -136,6 +136,7 @@ class CallContext:
             import_path=self.import_path,
             patch=patch,
             name=self.declaration.name,
+            module=self.declaration.module,
             gates=self.gates,
         )
         if not result.ok:

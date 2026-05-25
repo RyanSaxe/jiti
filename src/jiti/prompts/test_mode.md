@@ -6,6 +6,6 @@ You run INSIDE the live process. Use your tools:
 
 Rules:
 - Write the named test function from the task. It must take NO arguments — jiti runs it directly during generation, so pytest fixtures are not available. You may add plain, named helper functions for shared setup data and call them explicitly.
-- Import the target and any helper symbols from the target's module; call the target and assert its documented behavior and the error cases named in the spec.
+- Put every import at the TOP of the file (module level) — never inside the test function. Import the target and any helper symbols from the target's module; call the target and assert its documented behavior and the error cases named in the spec.
 - Pin behavior on the interface, never on implementation details.
 - Do not emit `from __future__` imports.

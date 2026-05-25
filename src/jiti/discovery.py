@@ -12,9 +12,8 @@ Importing happens at generation time, when your code is already loaded, so a tes
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import os
-import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -76,16 +75,24 @@ def _is_test_file(filename: str) -> bool:
 
 
 def _import_file(path: Path) -> None:
-    name = "_jiti_discovered." + re.sub(r"\W+", "_", str(path))
+    # Import under the canonical dotted name (like pytest), so __module__, __file__, and the
+    # generated companion paths are real — a synthetic name would corrupt import resolution.
+    name, root = _module_name(path)
     if name in sys.modules:
         return
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    if root not in sys.path:
+        sys.path.insert(0, root)
     try:
-        spec.loader.exec_module(module)
+        importlib.import_module(name)
     except Exception as error:
-        sys.modules.pop(name, None)
         logger.warning("jiti: skipped test file during discovery: %s (%s)", path, error)
+
+
+def _module_name(path: Path) -> tuple[str, str]:
+    """The file's dotted module name and the sys.path root it sits under (walks __init__.py)."""
+    parts = [path.stem]
+    parent = path.parent
+    while (parent / "__init__.py").exists():
+        parts.append(parent.name)
+        parent = parent.parent
+    return ".".join(reversed(parts)), str(parent)

@@ -15,6 +15,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import anthropic
+
 from jiti._log import cost, log_done, log_llm_call, log_start
 from jiti.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.discovery import import_test_modules
@@ -239,11 +241,9 @@ def _tool_result(context: CallContext, block: Any) -> dict[str, Any]:
 
 
 def default_engine() -> Engine:
-    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key)."""
+    """The shared engine backing bare `@jiti`, built lazily on first use (when a key is needed)."""
     global _DEFAULT
     if _DEFAULT is None:
-        import anthropic
-
         _DEFAULT = Engine(client=anthropic.Anthropic(), store=JitiStore(Path.cwd() / ".jiti"))
     return _DEFAULT
 

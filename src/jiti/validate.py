@@ -70,6 +70,7 @@ def validate(
     import_path: Sequence[str] = (),
     patch: MethodPatch | None = None,
     name: str = "",
+    module: str = "",
     gates: Sequence[Gate] = (),
     execute: bool = True,
 ) -> ValidationResult:
@@ -79,10 +80,10 @@ def validate(
     namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
     onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
 
-    `gates` are live tests (from `jiti.required_for`); each is run with the target `name`
-    rebound in its globals to the candidate, so it exercises the candidate, not the stub.
-    `execute=False` (test-mode) lints and type-checks only — used when generating a test
-    against a not-yet-implemented target, which therefore cannot be run.
+    `gates` are live tests (from `jiti.required_for`); for each, the target `module.name` is
+    bound to the candidate (in the module and in the test's globals) so it exercises the
+    candidate however it imported the target. `execute=False` (test-mode) lints and
+    type-checks only — used when generating a test against a not-yet-implemented target.
     """
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -93,7 +94,7 @@ def validate(
             _lint("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
         )
-        tests = _run_tests(formatted, test_source, patch, name, gates) if execute else ()
+        tests = _run_tests(formatted, test_source, patch, name, module, gates) if execute else ()
         checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
 
@@ -103,6 +104,7 @@ def _run_tests(
     test_source: str,
     patch: MethodPatch | None,
     name: str,
+    module: str,
     gates: Sequence[Gate],
 ) -> tuple[Check, ...]:
     namespace: dict[str, object] = {}
@@ -115,17 +117,18 @@ def _run_tests(
         tests = _call_tests(namespace)
         if not gates:
             return (tests,)
-        return (tests, _run_gates(namespace.get(name), gates))
+        return (tests, _run_gates(namespace.get(name), name, module, gates))
 
 
-def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
+def _run_gates(candidate: object, name: str, module: str, gates: Sequence[Gate]) -> Check:
     if not callable(candidate):
         return Check("gates", ok=False, output="the implementation did not define the target.")
     failures: list[str] = []
     for gate in gates:
-        with _rebound(gate, candidate):
+        with _bound_to_candidate(gate, name, module, candidate):
             try:
-                _run_gate(gate)
+                if gate.test is not None:
+                    gate.test()
             except JitiError:
                 raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
             except Exception:
@@ -133,21 +136,34 @@ def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
     return Check("gates", ok=not failures, output=cap("\n\n".join(failures)))
 
 
-def _run_gate(gate: Gate) -> None:
-    if gate.test is not None:
-        gate.test()
+_MISSING = object()
 
 
 @contextmanager
-def _rebound(gate: Gate, candidate: object) -> Iterator[None]:
-    """Point every global in the gate test that references its target at the candidate instead."""
-    namespace = gate.test.__globals__ if gate.test else {}
-    saved = {key: value for key, value in namespace.items() if value is gate.target}
-    namespace.update(dict.fromkeys(saved, candidate))
+def _bound_to_candidate(gate: Gate, name: str, module: str, candidate: object) -> Iterator[None]:
+    """Point the target at the candidate however the gate reaches it, then restore.
+
+    Patches the target's module attribute (covers a local `from x import target` or `x.target`)
+    and any name in the test's own globals (covers a module-level `from x import target`).
+    """
+    bindings: list[tuple[dict[str, object], str]] = []
+    target_module = sys.modules.get(module)
+    if target_module is not None:
+        bindings.append((target_module.__dict__, name))
+    if gate.test is not None:
+        scope = gate.test.__globals__
+        bindings.extend((scope, key) for key, value in list(scope.items()) if value is gate.target)
+    saved = [(scope, key, scope.get(key, _MISSING)) for scope, key in bindings]
+    for scope, key in bindings:
+        scope[key] = candidate
     try:
         yield
     finally:
-        namespace.update(saved)
+        for scope, key, value in saved:
+            if value is _MISSING:
+                scope.pop(key, None)
+            else:
+                scope[key] = value
 
 
 @contextmanager
