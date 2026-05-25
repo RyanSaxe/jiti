@@ -23,6 +23,9 @@ dependencies = [
     "ty>=0.0.39",
 ]
 
+[project.scripts]
+jiti = "jiti.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/RyanSaxe/jiti"
 Repository = "https://github.com/RyanSaxe/jiti"

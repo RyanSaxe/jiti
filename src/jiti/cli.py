@@ -7,13 +7,16 @@ generated jiti-tests, and `clear` deletes the mirror.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 from jiti.discovery import walk_py_files
-from jiti.merge import source_files
+from jiti.errors import JitiError
+from jiti.merge import run_merge, source_files
 from jiti.store import (
     JitiStore,
     Section,
@@ -155,3 +158,51 @@ def _drop_scratch(body: str) -> str:
 
 def _scratch_names(body: str) -> list[str]:
     return re.findall(r"^def (test_scratch_\w+)", body, re.MULTILINE)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="jiti", description="Inspect and graduate jiti code.")
+    parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: cwd)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("status", help="show generated sections and their state (read-only)")
+
+    merge = sub.add_parser("merge", help="inline generated code into your source, dropping @jiti")
+    merge.add_argument("targets", nargs="*", help="file path, dotted module, or qualname")
+    merge.add_argument("--all", action="store_true", dest="merge_all", help="merge every section")
+    merge.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+
+    test = sub.add_parser("test", help="manage generated jiti-tests")
+    test_sub = test.add_subparsers(dest="test_command", required=True)
+    pruner = test_sub.add_parser("prune", help="delete agent scratch tests (test_scratch_*)")
+    pruner.add_argument("--dry-run", action="store_true", help="print the count; write nothing")
+    keeper = test_sub.add_parser("keep", help="promote a scratch test so prune won't drop it")
+    keeper.add_argument("name", help="the scratch test's function name")
+
+    sub.add_parser("clear", help="delete the .jiti/ mirror")
+
+    args = parser.parse_args(argv)
+    try:
+        return _dispatch(args)
+    except JitiError as error:
+        print(f"jiti: {error}", file=sys.stderr)
+        return 1
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "status":
+        return status(args.root)
+    if args.command == "merge":
+        if not args.targets and not args.merge_all:
+            print("jiti merge: pass one or more targets, or --all", file=sys.stderr)
+            return 2
+        return run_merge(args.root, args.targets, args.merge_all, args.dry_run)
+    if args.command == "test":
+        if args.test_command == "prune":
+            return prune(args.root, args.dry_run)
+        return keep(args.root, args.name)
+    return clear(args.root)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
