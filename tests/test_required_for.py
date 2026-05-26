@@ -62,12 +62,36 @@ def test_required_for_rejects_a_non_jiti_target():
 
 
 class Box:
+    def __init__(self, size: int) -> None:
+        self.size = size
+
     @jiti(engine=_ENGINE)
     def grow(self, by: int) -> int:
-        """Grow by `by`."""
+        """Grow `self.size` by `by` and return the new size."""
         ...
 
 
-def test_required_for_rejects_methods_for_now():
-    with pytest.raises(NotImplementedError):
-        jiti.required_for(Box.grow)
+# A gate, not a pytest test (no `test_` prefix), so only jiti runs it — against the candidate.
+@jiti.required_for(Box.grow)
+def gate_box_grow_adds_by() -> None:
+    assert Box(5).grow(3) == 8
+
+
+def test_human_gate_runs_against_a_method_candidate():
+    passes_agent_but_not_gate = (
+        "def grow(self, by):\n    self.size = self.size * by\n    return self.size"  # 5*3=15, not 8
+    )
+    correct = "def grow(self, by):\n    self.size += by\n    return self.size"
+    agent_tests = (
+        "from test_required_for import Box\n\n"
+        "def test_grow():\n    assert Box(0).grow(0) == 0"  # true for both
+    )
+    calls_before = _CLIENT.calls
+    _CLIENT.script = [
+        *_CLIENT.script,
+        submit("grow", passes_agent_but_not_gate, agent_tests),  # fails the gate
+        submit("grow", correct, agent_tests),  # satisfies the gate
+    ]
+
+    assert Box(5).grow(3) == 8
+    assert _CLIENT.calls - calls_before == 2  # first candidate rejected by the gate

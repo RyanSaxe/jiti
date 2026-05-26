@@ -92,8 +92,6 @@ class _Jiti:
         """
         if not isinstance(target, _JitiCallable):
             raise JitiError("jiti.required_for(target) needs a @jiti-decorated function or method.")
-        if target._owner is not None:
-            raise NotImplementedError("required_for on methods is not supported yet.")
 
         def register(test: F) -> F:
             if not isinstance(test, types.FunctionType):
