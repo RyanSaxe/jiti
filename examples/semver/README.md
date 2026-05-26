@@ -3,27 +3,32 @@
 A small semver toolkit, defined entirely as interfaces, and implemented by jiti the first
 time you run it. This is the long-form version of the [README example](../../README.md#wiring-a-graph).
 
-## The graph
+## The shape
 
-[`core.py`](core.py) declares the toolkit as a graph of `@jiti` stubs:
+[`core.py`](core.py) declares the toolkit as `@jiti` stubs — each function is just a
+typed signature and a docstring, no body:
 
 ```
-       latest ────▶ sort_versions ────▶ compare ────▶ parse
-                                          ▲
-                                          │
-                                       satisfies
-                                          │
-                                          ▼
-                                       Version
-                                          │
-                                          ▼
-                                       Version.bump   ← a method stub
+parse · compare · satisfies · sort_versions · latest · Version.bump   ← method stub
 ```
 
-Every function is just a typed signature and a docstring. No bodies. The dependencies
-between them — `latest` calls `sort_versions`, which calls `compare`, which calls `parse`
-— are wired by *use*, not by configuration. When you call any node, jiti generates that
-node, and any other nodes it ends up calling, in dependency order.
+The *orchestration* — the actual graph — lives in plain Python you write yourself.
+[`cli.py`](cli.py) is exactly that: a small CLI whose commands call the jiti pieces.
+
+```python
+# excerpt from cli.py — human-written, no decorator
+def _run(args):
+    match args.command:
+        case "bump":      return str(parse(args.version).bump(args.part))
+        case "satisfies": return str(satisfies(args.version, args.spec))
+        case "sort":      return " ".join(sort_versions(args.versions))
+```
+
+When you run `python -m examples.semver bump 1.2.3 minor`, your CLI calls `parse`, which
+jiti generates; the generated `parse` returns a `Version`, on which your CLI calls the
+`Version.bump` method, which jiti generates next. Generation cascades through whatever
+your code touches — and a stub the agent happens to call from inside another stub
+generates the same way.
 
 ## The tests are the spec
 

@@ -37,36 +37,39 @@ and writes the result to a file beside your source. Every call after that runs t
 
 ## Wiring a graph
 
-Interface-first pays off when interfaces compose. You define what each piece *is*, and
-how it depends on the others, before any of them have a body — then a single call
-cascades generation through the graph.
+Interface-first pays off when interfaces compose. You write the orchestration in plain
+Python — that's *your* code, and that's where the graph lives. jiti writes the leaves.
 
 ```python
 from jiti import jiti
 
 
 @jiti
-def parse(text: str) -> Version:
-    """Parse 'MAJOR.MINOR.PATCH[-prerelease]' into a Version, or raise ValueError."""
-    ...
-
-
-@jiti
-def compare(a: str, b: str) -> int:
-    """Compare two version strings by semver precedence (-1, 0, 1). A release outranks a
-    prerelease of the same major.minor.patch."""
-    ...
-
-
-@jiti
 def satisfies(version: str, spec: str) -> bool:
     """True if `version` satisfies `spec`. Specs: exact, '>=', '>', '<=', '<', '~', '^'."""
     ...
+
+
+@jiti
+def sort_versions(versions: list[str]) -> list[str]:
+    """Return the version strings sorted ascending by semver precedence."""
+    ...
+
+
+# Your code — plain Python — composing the jiti pieces:
+def latest_matching(versions: list[str], spec: str) -> str | None:
+    """Return the highest-precedence version satisfying `spec`, or None."""
+    candidates = [v for v in versions if satisfies(v, spec)]
+    return sort_versions(candidates)[-1] if candidates else None
 ```
 
-`satisfies` will call `compare`, which will call `parse`. Calling `satisfies("1.2.3", "^1.0.0")`
-once generates all three — each implementation validated in turn, then cached. The full
-runnable version (with a `Version` dataclass and a method stub) lives in
+`latest_matching` is yours — no decorator, no magic, just a function. The first call to
+`latest_matching(["1.0.0", "2.0.0", "2.1.3"], "^2.0.0")` runs your code, which calls
+`satisfies` and `sort_versions`, which jiti generates on demand (and which may themselves
+need other stubs along the way — generation cascades). Every call after that is plain
+dispatch.
+
+The full runnable version (with a `Version` dataclass, more stubs, and a method) lives in
 [`examples/semver/`](examples/semver/).
 
 ## Install
