@@ -194,6 +194,115 @@ def test_removes_the_test_section_too(proj):
     proj.generate(module, "slugify", "def slugify(text):\n    return text")
     proj.generate_test(module, "slugify", "def test_scratch_x():\n    assert True")
 
-    run_merge(proj.root, [module], merge_all=False, dry_run=False)
+    run_merge(proj.root, [module], merge_all=False, dry_run=True)
 
-    assert not proj.jiti_test(module).exists()
+    # dry-run leaves the section in place
+    assert proj.jiti_test(module).exists()
+
+
+def test_drops_required_for_decorators_and_splices_stub_bodies(proj):
+    module = proj.module("text", SLUGIFY)
+    test_relpath = f"{proj.pkg}/test_slug.py"
+    test_module = f"{proj.pkg}.test_slug"
+    proj.write_test_file(
+        test_relpath,
+        dedent(f'''\
+            from {module} import slugify
+            from jiti import jiti
+
+
+            @jiti.required_for(slugify)
+            def test_real_body():
+                assert slugify("FOO") == "foo"
+
+
+            @jiti.required_for(slugify)
+            def test_stub_body() -> None:
+                """slugify lowers and strips."""
+                ...
+        '''),
+    )
+    proj.generate(module, "slugify", "def slugify(text):\n    return text.lower()")
+    stub_body = (
+        'def test_stub_body() -> None:\n    """slugify lowers and strips."""\n'
+        '    assert slugify("HELLO") == "hello"'
+    )
+    # Seed the generated stub body in the mirror keyed by the test function's qualname
+    test_section_path = proj.mirror / "tests" / proj.pkg / "test_test_slug.py"
+    test_section_path.parent.mkdir(parents=True, exist_ok=True)
+    from jiti.store import Section, content_hash, render_file  # noqa: PLC0415
+
+    key = f"{test_module}.test_stub_body"
+    test_section_path.write_text(
+        render_file("", {key: Section(key, "x", content_hash(stub_body), stub_body)})
+    )
+
+    assert run_merge(proj.root, [module], merge_all=False, dry_run=False) == 0
+
+    after = (proj.root / test_relpath).read_text()
+    assert "@jiti.required_for" not in after  # both decorators dropped
+    assert "def test_real_body" in after  # real-bodied test kept
+    assert 'assert slugify("FOO") == "foo"' in after  # real body preserved
+    assert "def test_stub_body" in after  # stub kept (function still there)
+    assert 'assert slugify("HELLO") == "hello"' in after  # stub body spliced from mirror
+
+
+def test_promotes_scratch_tests_into_the_gating_test_file(proj):
+    module = proj.module("text", SLUGIFY)
+    test_relpath = f"{proj.pkg}/test_slug.py"
+    proj.write_test_file(
+        test_relpath,
+        dedent(f"""\
+            from {module} import slugify
+            from jiti import jiti
+
+
+            @jiti.required_for(slugify)
+            def test_real() -> None:
+                assert slugify("BAR") == "bar"
+        """),
+    )
+    proj.generate(module, "slugify", "def slugify(text):\n    return text.lower()")
+    proj.generate_test(
+        module,
+        "slugify",
+        "def test_scratch_lowers():\n    assert slugify('A') == 'a'",
+    )
+
+    assert run_merge(proj.root, [module], merge_all=True, dry_run=False) == 0
+
+    after = (proj.root / test_relpath).read_text()
+    assert "test_scratch_lowers" not in after  # the `scratch_` prefix was promoted away
+    assert "def test_lowers" in after  # promoted scratch
+    assert 'slugify("A")' in after  # body preserved (ruff normalized quotes on write)
+    assert "promoted agent tests" in after  # the begin/end marker survives
+
+
+def test_prune_drops_scratch_tests_instead_of_promoting(proj):
+    module = proj.module("text", SLUGIFY)
+    test_relpath = f"{proj.pkg}/test_slug.py"
+    proj.write_test_file(
+        test_relpath,
+        dedent(f"""\
+            from {module} import slugify
+            from jiti import jiti
+
+
+            @jiti.required_for(slugify)
+            def test_real() -> None:
+                assert slugify("BAR") == "bar"
+        """),
+    )
+    proj.generate(module, "slugify", "def slugify(text):\n    return text.lower()")
+    proj.generate_test(
+        module,
+        "slugify",
+        "def test_scratch_lowers():\n    assert slugify('A') == 'a'",
+    )
+
+    run_merge(proj.root, [module], merge_all=True, dry_run=False, prune_scratch=True)
+
+    after = (proj.root / test_relpath).read_text()
+    assert "test_scratch" not in after
+    assert "test_lowers" not in after
+    assert "promoted agent tests" not in after

@@ -26,3 +26,11 @@ def test_compare_orders_by_precedence() -> None:
     """compare(a, b) returns -1/0/1 by semver precedence: compare('1.2.0', '1.10.0') == -1,
     equal versions give 0, and a prerelease is below its release (1.0.0-rc.1 < 1.0.0)."""
     ...
+
+
+@jiti.required_for(Version.bump)
+def test_bump_increments_and_resets_lower_parts():
+    assert Version(1, 2, 3).bump("major") == Version(2, 0, 0)
+    assert Version(1, 2, 3).bump("minor") == Version(1, 3, 0)
+    assert Version(1, 2, 3).bump("patch") == Version(1, 2, 4)
+    assert Version(1, 2, 3, "rc.1").bump("patch") == Version(1, 2, 4)  # prerelease dropped

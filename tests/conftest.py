@@ -69,6 +69,14 @@ class Project:
         key = f"{module}.{name}"
         path.write_text(render_file("", {key: Section(key, "s", content_hash(body), body)}))
 
+    def write_test_file(self, relpath: str, source: str) -> Path:
+        """Write a user test file at `relpath` and import it so its gates register immediately."""
+        path = self.root / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+        import_file(path)
+        return path
+
 
 @pytest.fixture
 def proj(tmp_path):

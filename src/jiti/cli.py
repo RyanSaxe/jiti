@@ -201,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     merge_p.add_argument("targets", nargs="*", help="file path, dotted module, or qualname")
     merge_p.add_argument("--all", action="store_true", dest="merge_all", help="merge every section")
     merge_p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+    merge_p.add_argument(
+        "--prune",
+        action="store_true",
+        help="drop agent scratch tests (default: append them to a user test file)",
+    )
     merge_p.set_defaults(handler=_handle_merge)
 
     test_p = sub.add_parser("test", help="manage generated jiti-tests")
@@ -228,7 +233,7 @@ def _handle_merge(args: argparse.Namespace) -> int:
     if not args.targets and not args.merge_all:
         print("jiti merge: pass one or more targets, or --all", file=sys.stderr)
         return 2
-    return run_merge(args.root, args.targets, args.merge_all, args.dry_run)
+    return run_merge(args.root, args.targets, args.merge_all, args.dry_run, args.prune)
 
 
 if __name__ == "__main__":

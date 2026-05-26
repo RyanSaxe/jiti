@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
+from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from jiti.decorator import _JitiCallable
-from jiti.discovery import import_file, module_name, walk_py_files
+from jiti.discovery import import_file, import_test_modules, module_name, walk_py_files
 from jiti.errors import MergeError
 from jiti.store import (
     Action,
     JitiStore,
+    Section,
     SectionRef,
     atomic_write,
     drop_section,
@@ -90,12 +94,22 @@ def _match(target: str, refs: Sequence[SectionRef]) -> list[SectionRef]:
     return [ref for ref in refs if ref.module == target or ref.key.startswith(f"{target}.")]
 
 
-def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool) -> int:
+def run_merge(
+    root: Path,
+    targets: Sequence[str],
+    merge_all: bool,
+    dry_run: bool,
+    prune_scratch: bool = False,
+) -> int:
     """Fold the selected generated sections back into their source files. Returns an exit code.
 
     Gating runs in full before any write: introspecting a stub reads its source by line number,
     so rewriting one function would corrupt the next one's spec check. We resolve every section
-    against the intact source first, then apply the (pure-text) rewrites.
+    against the intact source first, then apply the (pure-text) rewrites. After the impls land,
+    test files are folded in: `@jiti.required_for` decorators are dropped from user tests (and
+    stub bodies spliced in from the mirror), and agent scratch tests are appended to whichever
+    user test file already references the impl — or ejected to a new file in the project's test
+    layout. `--prune` drops the scratch tests instead of ejecting them.
     """
     mirror = root / ".jiti"
     refs = inventory(mirror)
@@ -106,6 +120,9 @@ def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool
     chosen = list(refs) if merge_all else select(targets, refs)
     sources = source_files(root)
     store = JitiStore(mirror)
+    # Import test modules so each merged target's @jiti.required_for gates are registered on
+    # its wrapper — _gate_locations_for reads them off the wrapper a few lines down.
+    import_test_modules([str(root)])
 
     plans: list[tuple[SectionRef, Path, Action]] = []
     blocked = False
@@ -116,12 +133,19 @@ def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool
             print(f"skip {ref.key}: {error}")
             blocked = blocked or not merge_all
 
+    # Capture each merged ref's gate locations before _apply rewrites source (which strips the
+    # @jiti decorator and so renders the wrapper unimportable for any later runs in this process).
+    gate_index: dict[str, list[_GateLocation]] = {
+        ref.key: _gate_locations_for(ref) for ref, _, _ in plans
+    }
+
     for ref, source_path, action in plans:
         if not dry_run:
-            _apply(ref, source_path, mirror)
+            _apply(ref, source_path, mirror, keep_test_section=True)
         print(f"{'would merge' if dry_run else 'merged'} {ref.key}  ({action.value})")
 
     if not dry_run and plans:
+        _merge_test_files(root, mirror, plans, gate_index, prune_scratch)
         remove_empty_dirs(mirror)
         if not _any_jiti_left(sources):
             print("no @jiti remains — you can drop jiti from your dependencies.")
@@ -141,14 +165,15 @@ def _gate(
     return ref, source_path, action
 
 
-def _apply(ref: SectionRef, source_path: Path, mirror: Path) -> None:
+def _apply(ref: SectionRef, source_path: Path, mirror: Path, keep_test_section: bool) -> None:
     imports, _ = parse_file(ref.impl_path.read_text())
     new_source = merge_into_source(
         source_path.read_text(), ref.qualname, ref.module, ref.section.body, imports
     )
     write_source(source_path, new_source)
     drop_section(ref.impl_path, ref.key)
-    drop_section(test_path_for_module(mirror, ref.module), ref.key)
+    if not keep_test_section:
+        drop_section(test_path_for_module(mirror, ref.module), ref.key)
 
 
 def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Action:
@@ -165,6 +190,238 @@ def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Acti
 
 def _any_jiti_left(sources: dict[str, Path]) -> bool:
     return any("@jiti" in path.read_text() for path in set(sources.values()))
+
+
+@dataclass(frozen=True)
+class _GateLocation:
+    """Where a gate's test function lives in source — captured before merging mutates anything."""
+
+    test_path: Path
+    test_name: str
+
+
+def _gate_locations_for(ref: SectionRef) -> list[_GateLocation]:
+    """Where each gate registered on `ref`'s wrapper lives in source. Empty if there are none."""
+    target: object | None = sys.modules.get(ref.module)
+    for part in ref.qualname.split("."):
+        target = getattr(target, part, None)
+        if target is None:
+            return []
+    if not isinstance(target, _JitiCallable):
+        return []
+    locations: list[_GateLocation] = []
+    for gate in target._gates:
+        if gate.test is None:
+            continue
+        locations.append(
+            _GateLocation(
+                test_path=Path(gate.test.__code__.co_filename).resolve(),
+                test_name=gate.test.__name__,
+            )
+        )
+    return locations
+
+
+def _merge_test_files(
+    root: Path,
+    mirror: Path,
+    plans: list[tuple[SectionRef, Path, Action]],
+    gate_index: dict[str, list[_GateLocation]],
+    prune_scratch: bool,
+) -> None:
+    """Fold mirror test sections back into source: drop @jiti.required_for decorators, splice
+    generated stub bodies, and either eject agent scratch tests or drop them (--prune)."""
+    by_test_file: dict[Path, set[str]] = defaultdict(set)
+    for ref, _, _ in plans:
+        for loc in gate_index[ref.key]:
+            by_test_file[loc.test_path].add(loc.test_name)
+    for test_path, test_names in by_test_file.items():
+        _rewrite_user_test_file(test_path, mirror, root, test_names)
+
+    by_module: dict[str, list[SectionRef]] = defaultdict(list)
+    for ref, _, _ in plans:
+        by_module[ref.module].append(ref)
+    for module, refs in by_module.items():
+        scratch_path = test_path_for_module(mirror, module)
+        if not scratch_path.exists():
+            continue
+        if prune_scratch:
+            for ref in refs:
+                drop_section(scratch_path, ref.key)
+        else:
+            _eject_module_scratch(scratch_path, refs, root, gate_index)
+
+
+def _rewrite_user_test_file(
+    test_path: Path, mirror: Path, root: Path, test_names: set[str]
+) -> None:
+    """Drop `@jiti.required_for` decorators on the named tests, splicing stub bodies from mirror."""
+    test_module = _module_dotted(test_path, root)
+    mirror_test = test_path_for_module(mirror, test_module)
+    try:
+        _, mirror_sections = parse_file(mirror_test.read_text())
+    except FileNotFoundError:
+        mirror_sections = {}
+
+    source = test_path.read_text()
+    tree = ast.parse(source)
+    edits, spliced_keys = _plan_test_file_edits(tree, test_module, test_names, mirror_sections)
+    if not edits:
+        return
+    lines = source.splitlines()
+    for start, end, replacement in sorted(edits, key=lambda e: -e[0]):
+        lines = lines[: start - 1] + replacement + lines[end:]
+    write_source(test_path, "\n".join(lines).rstrip("\n") + "\n")
+    for key in spliced_keys:
+        drop_section(mirror_test, key)
+
+
+def _plan_test_file_edits(
+    tree: ast.Module,
+    test_module: str,
+    test_names: set[str],
+    mirror_sections: dict[str, Section],
+) -> tuple[list[tuple[int, int, list[str]]], list[str]]:
+    """Plan (start, end, replacement) edits for each gated test in `tree` matching `test_names`."""
+    edits: list[tuple[int, int, list[str]]] = []
+    spliced_keys: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if node.name not in test_names:
+            continue
+        rf_decorators = [d for d in node.decorator_list if _is_required_for_decorator(d)]
+        if not rf_decorators:
+            continue
+        section_key = f"{test_module}.{node.name}"
+        section = mirror_sections.get(section_key)
+        if _is_stub_body(node) and section is not None:
+            start = min(d.lineno for d in node.decorator_list)
+            end = node.end_lineno or node.lineno
+            edits.append((start, end, section.body.splitlines()))
+            spliced_keys.append(section_key)
+        else:
+            for d in rf_decorators:
+                edits.append((d.lineno, d.end_lineno or d.lineno, []))
+    return edits, spliced_keys
+
+
+def _eject_module_scratch(
+    scratch_path: Path,
+    refs: list[SectionRef],
+    root: Path,
+    gate_index: dict[str, list[_GateLocation]],
+) -> None:
+    """Append scratch tests for `refs` to a project test file, promoting `test_scratch_*` →
+    `test_*` so pytest treats them as real tests rather than scratch."""
+    _, sections = parse_file(scratch_path.read_text())
+    keys = [ref.key for ref in refs if ref.key in sections]
+    if not keys:
+        return
+    destination = _scratch_destination(refs, root, gate_index)
+    bodies = "\n\n\n".join(_promote_scratch(sections[key].body) for key in keys)
+    block = f"{_PROMOTED_BEGIN}\n{bodies}\n{_PROMOTED_END}\n"
+    if destination.exists():
+        existing = destination.read_text()
+        if not existing.endswith("\n"):
+            existing += "\n"
+        new_text = f"{existing}\n\n{block}"
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        new_text = f"{_PROMOTED_HEADER}\n{block}"
+    write_source(destination, new_text)
+    for key in keys:
+        drop_section(scratch_path, key)
+
+
+def _promote_scratch(body: str) -> str:
+    """Promote scratch tests: rename `def test_scratch_*(...)` to `def test_*(...)`."""
+    return re.sub(r"\bdef test_scratch_", "def test_", body)
+
+
+_PROMOTED_HEADER = (
+    "# Agent-written tests, promoted by `jiti merge`.\n"
+    "# Originally `test_scratch_*` from impl development — their prefix has been dropped so\n"
+    "# pytest now runs them as real tests. Keep, edit, or delete as you would any other test.\n"
+)
+_PROMOTED_BEGIN = "# === jiti merge: promoted agent tests below ==="
+_PROMOTED_END = "# === jiti merge: end promoted agent tests ==="
+
+
+def _scratch_destination(
+    refs: list[SectionRef],
+    root: Path,
+    gate_index: dict[str, list[_GateLocation]],
+) -> Path:
+    """Pick where to append scratch tests for an impl module: user test file if any gates it,
+    else the test file convention discovered from the project's existing test layout."""
+    gate_files: list[Path] = sorted(
+        {loc.test_path for ref in refs for loc in gate_index.get(ref.key, [])}
+    )
+    if gate_files:
+        return gate_files[0]
+    impl_module = refs[0].module
+    return _conventional_test_path(root, impl_module)
+
+
+def _conventional_test_path(root: Path, impl_module: str) -> Path:
+    """A fresh test-file path for `impl_module` that follows the project's existing layout.
+
+    If any `tests/` directory exists near the impl (walking up from the impl's parent), place
+    the new file inside it under a path that mirrors the impl. Otherwise create a `tests/`
+    directory at the project root and place the file there.
+    """
+    relpath = Path(*impl_module.split("."))
+    basename = f"test_{relpath.name}.py"
+    for parent in [relpath.parent, *relpath.parent.parents]:
+        candidate_dir = root / parent / "tests"
+        if candidate_dir.is_dir():
+            sub = relpath.relative_to(parent).parent
+            return candidate_dir / sub / basename
+    return root / "tests" / relpath.parent / basename
+
+
+def _module_dotted(path: Path, root: Path) -> str:
+    """Dotted module name for `path`, relative to `root` (used to key mirror sections)."""
+    return ".".join(path.resolve().relative_to(root.resolve()).with_suffix("").parts)
+
+
+def _is_required_for_decorator(node: ast.expr) -> bool:
+    """True for `@jiti.required_for(...)`."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "required_for"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "jiti"
+    )
+
+
+def _is_stub_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True if the function body is only a docstring and/or placeholders (`...`, `pass`)."""
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if not body:
+        return True
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is Ellipsis
+        ):
+            continue
+        return False
+    return True
 
 
 def _find_jiti_def_at(tree: ast.Module, qualname: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
