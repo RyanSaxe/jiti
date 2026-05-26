@@ -188,3 +188,7 @@ pass, the edit/conflict lifecycle, and the `jiti` CLI (`status` / `merge` / `tes
 Not yet: `merge` of methods that carry stacked decorators (`@classmethod`,
 `@staticmethod`), a pytest plugin, whole-class generation, multiple model providers,
 and dependency-aware invalidation.
+
+## Inspiration
+
+[This video](https://www.youtube.com/watch?v=HOO_yaidVWk) is what inspired me to make this package. I then found [this package](https://github.com/JirkaKlimes/jit-implementation), a joke implementation of the idea from 2 years ago. But now we've gotten to the point where LLMs are good enough that maybe, just maybe, this direction is worth entertaining.
