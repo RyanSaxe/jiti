@@ -13,7 +13,6 @@ import ast
 import os
 import subprocess
 import sys
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -24,11 +23,12 @@ from jiti.store import (
     Action,
     JitiStore,
     SectionRef,
+    atomic_write,
     drop_section,
     inventory,
-    module_relpath,
     parse_file,
     remove_empty_dirs,
+    test_path_for_module,
 )
 from jiti.validate import RUFF
 
@@ -54,17 +54,7 @@ def merge_into_source(
 
 def write_source(path: Path, text: str) -> None:
     """Atomically replace a source file, then fix its imports and format it with ruff."""
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}.", suffix=".py")
-    os.close(fd)
-    tmp = Path(name)
-    try:
-        tmp.write_text(text if text.endswith("\n") else text + "\n")
-        _ruff(tmp, "check", "--fix", "--select", "F401,I", "--quiet")
-        _ruff(tmp, "format", "--quiet")
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    atomic_write(path, text if text.endswith("\n") else text + "\n", _ruff_fix_and_format)
 
 
 def source_files(root: Path) -> dict[str, Path]:
@@ -157,7 +147,7 @@ def _apply(ref: SectionRef, source_path: Path, mirror: Path) -> None:
     )
     write_source(source_path, new_source)
     drop_section(ref.impl_path, ref.key)
-    drop_section(_test_path(mirror, ref), ref.key)
+    drop_section(test_path_for_module(mirror, ref.module), ref.key)
 
 
 def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Action:
@@ -167,11 +157,6 @@ def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Acti
     if not isinstance(wrapper, _JitiCallable):
         raise MergeError(f"no @jiti `{ref.qualname}` in {source_path.name}; regenerate or clear")
     return store.resolve(wrapper.declaration()).action
-
-
-def _test_path(mirror: Path, ref: SectionRef) -> Path:
-    relpath = module_relpath(ref.module)
-    return mirror / "tests" / relpath.with_name(f"test_{relpath.name}")
 
 
 def _any_jiti_left(sources: dict[str, Path]) -> bool:
@@ -258,5 +243,7 @@ def _import_anchor(tree: ast.Module) -> int:
     return 0
 
 
-def _ruff(path: Path, *args: str) -> None:
-    subprocess.run([*RUFF, *args, str(path)], capture_output=True)
+def _ruff_fix_and_format(path: Path) -> None:
+    fix = [*RUFF, "check", "--fix", "--select", "F401,I", "--quiet", str(path)]
+    subprocess.run(fix, capture_output=True)
+    subprocess.run([*RUFF, "format", "--quiet", str(path)], capture_output=True)

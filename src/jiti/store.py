@@ -100,8 +100,7 @@ class JitiStore:
         return self.root / module_relpath(declaration.module)
 
     def test_path(self, declaration: Declaration) -> Path:
-        relpath = module_relpath(declaration.module)
-        return self.root / "tests" / relpath.with_name(f"test_{relpath.name}")
+        return test_path_for_module(self.root, declaration.module)
 
     def read_section(self, declaration: Declaration) -> Section | None:
         try:
@@ -138,7 +137,7 @@ class JitiStore:
         sections[section.key] = section
         combined = "\n".join(part for part in (existing_imports, imports) if part)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(path, render_file(combined, sections))
+        atomic_write(path, render_file(combined, sections), _clean_imports)
 
     def load(self, declaration: Declaration) -> Callable[..., Any]:
         """Compile the companion fresh (no bytecode cache) and return the declared function."""
@@ -197,7 +196,7 @@ def save_sections(path: Path, imports: str, sections: dict[str, Section]) -> Non
     if not sections:
         path.unlink(missing_ok=True)
         return
-    _atomic_write(path, render_file(imports, sections))
+    atomic_write(path, render_file(imports, sections), _clean_imports)
 
 
 def remove_empty_dirs(root: Path) -> None:
@@ -293,21 +292,18 @@ def _split_imports(source: str) -> tuple[str, str]:
     return "\n".join(imports), body
 
 
-def _atomic_write(path: Path, text: str) -> None:
-    """Publish `text` to `path` via a same-directory temp file and an atomic rename, so a
-    reader (or a second process cold-starting the same module) never sees a half-written
-    companion. This rename is the only concurrency guard jiti makes — see the README's
-    "Concurrency" section for why we stop here rather than take on cross-process locks.
-
-    The temp file ends in `.py` (so `_clean_imports`' ruff pass actually processes it) and
-    lives beside the target (so the rename stays on one filesystem, where it is atomic).
+def atomic_write(path: Path, text: str, post_process: Callable[[Path], None] | None = None) -> None:
+    """Publish `text` to `path` via a same-dir temp + atomic rename so readers never see a
+    half-written file. The temp file ends in `.py` so post-processors (e.g. ruff) treat it
+    as Python; it lives beside the target so the rename stays on one filesystem.
     """
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}.", suffix=".py")
     os.close(fd)
     tmp = Path(name)
     try:
         tmp.write_text(text)
-        _clean_imports(tmp)
+        if post_process is not None:
+            post_process(tmp)
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -349,6 +345,12 @@ def module_relpath(module: str) -> Path:
     return Path(*module.split(".")).with_suffix(".py")
 
 
+def test_path_for_module(mirror: Path, module: str) -> Path:
+    """Companion test path for a dotted module: `app.text` → `<mirror>/tests/app/test_text.py`."""
+    relpath = module_relpath(module)
+    return mirror / "tests" / relpath.with_name(f"test_{relpath.name}")
+
+
 @dataclass(frozen=True)
 class SectionRef:
     """A generated impl section located in the mirror, tied back to its source module."""
@@ -374,11 +376,11 @@ class SectionRef:
 
 def inventory(root: Path) -> list[SectionRef]:
     """Every generated impl section in the mirror (the `tests/` subtree is excluded)."""
-    root = root.resolve()  # walk_py_files resolves paths; keep root comparable to them
+    root = root.resolve()
     tests_dir = root / "tests"
     refs: list[SectionRef] = []
     for path in sorted(walk_py_files(root)):
-        if tests_dir in path.parents:
+        if path.is_relative_to(tests_dir):
             continue
         module = ".".join(path.relative_to(root).with_suffix("").parts)
         for key, section in parse_sections(path.read_text()).items():
