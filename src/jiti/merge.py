@@ -313,25 +313,79 @@ def _eject_module_scratch(
     gate_index: dict[str, list[_GateLocation]],
 ) -> None:
     """Append scratch tests for `refs` to a project test file, promoting `test_scratch_*` →
-    `test_*` so pytest treats them as real tests rather than scratch."""
-    _, sections = parse_file(scratch_path.read_text())
+    `test_*` so pytest treats them as real tests rather than scratch. Imports from the mirror
+    scratch file are merged into the destination's import block; functions whose names already
+    exist in the destination are skipped to avoid silent overrides."""
+    scratch_imports, sections = parse_file(scratch_path.read_text())
     keys = [ref.key for ref in refs if ref.key in sections]
     if not keys:
         return
     destination = _scratch_destination(refs, root, gate_index)
-    bodies = "\n\n\n".join(_promote_scratch(sections[key].body) for key in keys)
-    block = f"{_PROMOTED_BEGIN}\n{bodies}\n{_PROMOTED_END}\n"
+    existing_names = _toplevel_function_names(destination) if destination.exists() else set()
+    promoted_bodies: list[str] = []
+    for key in keys:
+        body = _drop_conflicting_defs(_promote_scratch(sections[key].body), existing_names)
+        if body.strip():
+            promoted_bodies.append(body)
+            existing_names.update(_toplevel_names_in(body))
+    if not promoted_bodies:
+        for key in keys:
+            drop_section(scratch_path, key)
+        return
+    block = f"{_PROMOTED_BEGIN}\n{'\n\n\n'.join(promoted_bodies)}\n{_PROMOTED_END}\n"
     if destination.exists():
         existing = destination.read_text()
-        if not existing.endswith("\n"):
-            existing += "\n"
-        new_text = f"{existing}\n\n{block}"
+        with_imports = _inject_imports(existing, scratch_imports) if scratch_imports else existing
+        if not with_imports.endswith("\n"):
+            with_imports += "\n"
+        new_text = f"{with_imports}\n\n{block}"
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        new_text = f"{_PROMOTED_HEADER}\n{block}"
+        preamble = (
+            f"{_PROMOTED_HEADER}\n{scratch_imports}\n\n" if scratch_imports else _PROMOTED_HEADER
+        )
+        new_text = f"{preamble}\n{block}"
     write_source(destination, new_text)
     for key in keys:
         drop_section(scratch_path, key)
+
+
+def _toplevel_function_names(path: Path) -> set[str]:
+    """Top-level function (and class) names defined in `path`."""
+    return _toplevel_names_in(path.read_text())
+
+
+def _toplevel_names_in(source: str) -> set[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    }
+
+
+def _drop_conflicting_defs(body: str, existing_names: set[str]) -> str:
+    """Remove top-level defs from `body` whose names are already in `existing_names`."""
+    try:
+        tree = ast.parse(body)
+    except SyntaxError:
+        return body
+    drop: set[int] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if node.name not in existing_names:
+            continue
+        start = min((d.lineno for d in node.decorator_list), default=node.lineno)
+        end = node.end_lineno or node.lineno
+        drop.update(range(start, end + 1))
+    if not drop:
+        return body
+    lines = body.splitlines()
+    return "\n".join(line for i, line in enumerate(lines, 1) if i not in drop).strip("\n")
 
 
 def _promote_scratch(body: str) -> str:
@@ -463,11 +517,52 @@ def _is_jiti_decorator(node: ast.expr) -> bool:
 
 
 def _splice(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef, body: str) -> str:
-    """Replace the def's full span — decorators through last body line — with `body`."""
+    """Replace the def's full span with `body`, preserving the user's signature line(s).
+
+    The user's signature is the contract — keeping it sidesteps Python forward-reference issues
+    (a method body referring to its enclosing class by name) and any cosmetic drift the agent
+    introduced (e.g. unquoted vs quoted annotations).
+    """
     start = min((decorator.lineno for decorator in node.decorator_list), default=node.lineno)
     end = node.end_lineno or node.lineno
-    body_lines = _reindent(body, node.col_offset).splitlines()
+    rebuilt = _replace_signature_in_body(lines, node, body)
+    body_lines = _reindent(rebuilt, node.col_offset).splitlines()
     return "\n".join(lines[: start - 1] + body_lines + lines[end:])
+
+
+def _replace_signature_in_body(
+    source_lines: list[str], user_node: ast.FunctionDef | ast.AsyncFunctionDef, body: str
+) -> str:
+    """Rewrite `body` so its public def uses `user_node`'s signature; leave helpers as-is."""
+    section_lines = body.splitlines()
+    public = _public_function(body, user_node.name)
+    if public is None:
+        return body
+    user_signature = _signature_lines(source_lines, user_node)
+    public_sig_first = public.lineno
+    public_sig_last = (public.body[0].lineno - 1) if public.body else public.lineno
+    rebuilt = (
+        section_lines[: public_sig_first - 1] + user_signature + section_lines[public_sig_last:]
+    )
+    return "\n".join(rebuilt)
+
+
+def _public_function(body: str, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The top-level def in `body` whose name matches `name` (the user's stub)."""
+    for node in ast.parse(body).body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            return node
+    return None
+
+
+def _signature_lines(
+    source_lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> list[str]:
+    """The def's signature line(s) from source, dedented to col_offset 0."""
+    first = node.lineno
+    last = (node.body[0].lineno - 1) if node.body else node.lineno
+    indent = " " * node.col_offset
+    return [line.removeprefix(indent) for line in source_lines[first - 1 : last]]
 
 
 def _reindent(body: str, col_offset: int) -> str:

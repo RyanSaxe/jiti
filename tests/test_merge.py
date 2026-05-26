@@ -61,6 +61,20 @@ METHOD_WITH_SIBLING = dedent('''\
             ...
 ''')
 
+METHOD_FORWARD_REF = dedent('''\
+    from jiti import jiti
+
+
+    class Node:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+        @jiti
+        def next(self) -> "Node":
+            """Return the next Node (value + 1)."""
+            ...
+''')
+
 
 def test_inlines_body_and_removes_the_section(proj):
     module = proj.module("text", SLUGIFY)
@@ -118,6 +132,34 @@ def test_merges_a_method_into_its_class(proj):
     assert "from jiti import jiti" not in source
     assert "    def bump(self)" in source  # indented under the class
     assert "return Version(self.major + 1)" in source
+
+
+def test_merge_method_keeps_user_signature_for_forward_refs(proj):
+    """The agent's generated impl may use an unquoted self-class annotation (valid in the mirror
+    where the class is in scope as a regular import). Splicing that bare reference into the class
+    body breaks: the class isn't bound yet during class-body evaluation. Preserving the user's
+    quoted signature avoids the issue."""
+    module = proj.module("node", METHOD_FORWARD_REF)
+    # Agent's impl uses bare `Node` (no quotes) — which works at module scope but not inside the
+    # class body it's being merged into.
+    proj.generate(
+        module,
+        "Node.next",
+        "def next(self) -> Node:\n    return Node(self.value + 1)",
+    )
+
+    assert run_merge(proj.root, [module], merge_all=False, dry_run=False) == 0
+
+    # The merged source should be importable. Confirm via a fresh sys.modules import.
+    import importlib  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    for cached in [n for n in sys.modules if n == module or n.startswith(f"{module}.")]:
+        del sys.modules[cached]
+    mod = importlib.import_module(module)
+    assert mod.Node(1).next().value == 2  # body still works
+    source = proj.source_of(module).read_text()
+    assert '"Node"' in source  # quoted forward reference preserved
 
 
 def test_merge_method_preserves_sibling_methods(proj):
