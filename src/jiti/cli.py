@@ -23,11 +23,11 @@ from jiti.store import (
     SectionRef,
     content_hash,
     inventory,
-    module_relpath,
     parse_file,
     parse_sections,
     remove_empty_dirs,
     save_sections,
+    test_path_for_module,
 )
 
 
@@ -43,12 +43,13 @@ def status(root: Path) -> int:
     by_module: dict[str, list[SectionRef]] = defaultdict(list)
     for ref in refs:
         by_module[ref.module].append(ref)
+    test_sections = _load_test_sections(mirror, by_module)
 
     edited = methods = kept_total = scratch_total = 0
     for module in sorted(by_module):
         print(_display_path(sources.get(module), module, root))
         for ref in sorted(by_module[module], key=lambda ref: ref.qualname):
-            kept, scratch = _test_counts(mirror, ref)
+            kept, scratch = _test_counts(test_sections.get(ref.key))
             kept_total, scratch_total = kept_total + kept, scratch_total + scratch
             edited += ref.section.edited
             methods += ref.is_method
@@ -64,19 +65,31 @@ def status(root: Path) -> int:
     return 0
 
 
-def _test_counts(mirror: Path, ref: SectionRef) -> tuple[int, int]:
-    """`(kept, scratch)` test counts for a section, read from its `.jiti/tests/` companion."""
-    relpath = module_relpath(ref.module)
-    test_path = mirror / "tests" / relpath.with_name(f"test_{relpath.name}")
-    try:
-        section = parse_sections(test_path.read_text()).get(ref.key)
-    except FileNotFoundError:
-        return 0, 0
+def _load_test_sections(mirror: Path, by_module: dict[str, list[SectionRef]]) -> dict[str, Section]:
+    """Parse each module's companion test file once and return all sections by key."""
+    out: dict[str, Section] = {}
+    for module in by_module:
+        try:
+            text = test_path_for_module(mirror, module).read_text()
+        except FileNotFoundError:
+            continue
+        out.update(parse_sections(text))
+    return out
+
+
+def _test_counts(section: Section | None) -> tuple[int, int]:
+    """`(kept, scratch)` test counts in a parsed section body."""
     if section is None:
         return 0, 0
-    scratch = len(re.findall(r"^def test_scratch_", section.body, re.MULTILINE))
-    total = len(re.findall(r"^def test_", section.body, re.MULTILINE))
-    return total - scratch, scratch
+    kept = scratch = 0
+    for node in ast.parse(section.body).body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if node.name.startswith("test_scratch_"):
+            scratch += 1
+        elif node.name.startswith("test_"):
+            kept += 1
+    return kept, scratch
 
 
 def _display_path(source: Path | None, module: str, root: Path) -> str:
@@ -99,15 +112,22 @@ def prune(root: Path, dry_run: bool) -> int:
     for path in sorted(walk_py_files(tests_dir)):
         imports, sections = parse_file(path.read_text())
         kept: dict[str, Section] = {}
+        file_removed = 0
         for key, section in sections.items():
-            removed += len(_scratch_names(section.body))
+            scratch = _scratch_names(section.body)
+            if not scratch:
+                kept[key] = section
+                continue
+            file_removed += len(scratch)
             body = _drop_scratch(section.body)
             if body.strip():
                 kept[key] = Section(key, section.spec_hash, content_hash(body), body)
-        if not dry_run:
-            save_sections(path, imports, kept)
+        if file_removed:
+            removed += file_removed
+            if not dry_run:
+                save_sections(path, imports, kept)
 
-    if not dry_run:
+    if not dry_run and removed:
         remove_empty_dirs(root / ".jiti")
     print(f"{'would prune' if dry_run else 'pruned'} {removed} scratch test(s).")
     return 0
