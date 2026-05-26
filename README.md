@@ -104,6 +104,25 @@ guide** (how tests read). Defaults ship with jiti; override either with `Engine(
 `JITI_LOG=info` logs each model call; `JITI_LOG=debug` adds tool calls. `jiti.clear()` (or
 `rm -rf .jiti`) drops the cache.
 
+## The CLI
+
+`jiti` ships a small command-line tool for inspecting and graduating generated code:
+
+```bash
+jiti status                  # what's generated, and what you've hand-edited (read-only)
+jiti merge app.text.slugify  # inline one function into its source, drop @jiti
+jiti merge --all             # …graduate the whole project off jiti
+jiti test prune              # delete the agent's scratch tests (test_scratch_*)
+jiti clear                   # delete .jiti/
+```
+
+`merge` is how you graduate: it folds the generated implementation back into your source file,
+replacing the stub and removing `@jiti`, then cleans up the mirror — so `merge --all` is the
+"I'm done with jiti" button (it leaves you plain Python and tells you when you can drop the
+dependency). A target can be a file path, a dotted module, or a qualname; `--dry-run` previews.
+Merge refuses sections that have drifted from their source (regenerate first) and, for now,
+methods. `jiti test keep <name>` rescues a scratch test by un-prefixing it.
+
 ## A few things worth knowing
 
 - **The code is yours.** Edit a generated body and jiti runs it as-is — it tracks a hash and
@@ -137,7 +156,8 @@ uv run pytest
 
 Early. Today: free functions and methods, lazy agentic generation, in-process validation with
 cascading generation, test-driven generation via `@jiti.required_for` with a score-gated
-refactor pass, the edit/conflict lifecycle, and Anthropic. Scoped to pure functions.
+refactor pass, the edit/conflict lifecycle, the `jiti` CLI (`status`/`merge`/`test`/`clear`),
+and Anthropic. Scoped to pure functions.
 
-Not yet: a `jiti` CLI, `jiti eject`, `required_for` on methods, a pytest plugin, whole-class
-generation, multiple providers, and dependency-aware invalidation.
+Not yet: `required_for` on methods, `merge` of methods, a pytest plugin, whole-class generation,
+multiple providers, and dependency-aware invalidation.

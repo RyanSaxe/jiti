@@ -16,12 +16,12 @@ from __future__ import annotations
 import importlib
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from jiti._log import logger
 
-_SKIP = {
+SKIP = {
     ".jiti",
     ".venv",
     "venv",
@@ -46,7 +46,7 @@ def import_test_modules(test_paths: Sequence[str] | None) -> None:
             already.add(Path(file).resolve())
     for path in _test_files(test_paths):
         if path not in already:
-            _import_file(path)
+            import_file(path)
 
 
 def _test_files(test_paths: Sequence[str] | None) -> list[Path]:
@@ -61,24 +61,29 @@ def _test_files(test_paths: Sequence[str] | None) -> list[Path]:
 
 
 def _walk(root: Path) -> set[Path]:
+    return walk_py_files(root, _is_test_file)
+
+
+def walk_py_files(root: Path, predicate: Callable[[str], bool] = lambda _: True) -> set[Path]:
+    """Resolved `.py` files under `root`, pruning `SKIP` dirs and matching `predicate` by name."""
     # os.walk so we can prune skip-dirs in place — rglob would descend into .venv etc.
     found: set[Path] = set()
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in _SKIP]
-        found.update(Path(dirpath, name).resolve() for name in filenames if _is_test_file(name))
+        dirnames[:] = [name for name in dirnames if name not in SKIP]
+        for name in filenames:
+            if name.endswith(".py") and predicate(name):
+                found.add(Path(dirpath, name).resolve())
     return found
 
 
 def _is_test_file(filename: str) -> bool:
-    if not filename.endswith(".py"):
-        return False
     return filename.startswith("test_") or filename.endswith("_test.py")
 
 
-def _import_file(path: Path) -> None:
+def import_file(path: Path) -> None:
     # Import under the canonical dotted name (like pytest), so __module__, __file__, and the
     # generated companion paths are real — a synthetic name would corrupt import resolution.
-    name, root = _module_name(path)
+    name, root = module_name(path)
     if name in sys.modules:
         return
     if root not in sys.path:
@@ -89,7 +94,7 @@ def _import_file(path: Path) -> None:
         logger.warning("jiti: could not import %s — its gates won't apply (%s)", path, error)
 
 
-def _module_name(path: Path) -> tuple[str, str]:
+def module_name(path: Path) -> tuple[str, str]:
     """The file's dotted module name and the sys.path root it sits under (walks __init__.py)."""
     parts = [path.stem]
     parent = path.parent

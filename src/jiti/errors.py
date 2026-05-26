@@ -28,3 +28,7 @@ class ConflictError(JitiError):
     The declaration is canonical, but the implementation was edited by hand, so jiti
     refuses to silently clobber it or run a stale-signature implementation.
     """
+
+
+class MergeError(JitiError):
+    """A `jiti merge` could not fold generated code back into a source file."""
