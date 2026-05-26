@@ -17,6 +17,20 @@ STUB = dedent('''\
         ...
 ''')
 
+METHOD_STUB = dedent('''\
+    from jiti import jiti
+
+
+    class Box:
+        def __init__(self, size: int) -> None:
+            self.size = size
+
+        @jiti
+        def grow(self) -> int:
+            """Grow."""
+            ...
+''')
+
 
 def test_requires_a_subcommand():
     with pytest.raises(SystemExit):
@@ -42,6 +56,18 @@ def test_merge_all_via_main(proj, capsys):
     source = proj.source_of(module).read_text()
     assert "@jiti" not in source
     assert "return 1" in source
+
+
+def test_merge_method_via_main(proj):
+    module = proj.module("b", METHOD_STUB)
+    proj.generate(module, "Box.grow", "def grow(self) -> int:\n    return self.size * 2")
+
+    assert main(["--root", str(proj.root), "merge", "--all"]) == 0
+
+    source = proj.source_of(module).read_text()
+    assert "@jiti" not in source
+    assert "    def grow(self) -> int:" in source
+    assert "return self.size * 2" in source
 
 
 def test_test_prune_via_main(tmp_path, capsys):

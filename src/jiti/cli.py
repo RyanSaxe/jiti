@@ -53,9 +53,8 @@ def status(root: Path) -> int:
             kept_total, scratch_total = kept_total + kept, scratch_total + scratch
             edited += ref.section.edited
             methods += ref.is_method
-            note = "  (merge: not supported yet)" if ref.is_method else ""
-            state = "method" if ref.is_method else ("edited" if ref.section.edited else "clean")
-            print(f"  {ref.qualname:<24} {state:<7} tests: {kept} kept, {scratch} scratch{note}")
+            state = "edited" if ref.section.edited else "clean"
+            print(f"  {ref.qualname:<24} {state:<7} tests: {kept} kept, {scratch} scratch")
         print()
 
     print(

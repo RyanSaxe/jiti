@@ -47,6 +47,20 @@ METHOD = dedent('''\
             ...
 ''')
 
+METHOD_WITH_SIBLING = dedent('''\
+    from jiti import jiti
+
+
+    class Counter:
+        def __init__(self, start: int) -> None:
+            self.count = start
+
+        @jiti
+        def step(self) -> int:
+            """Increment and return the new count."""
+            ...
+''')
+
 
 def test_inlines_body_and_removes_the_section(proj):
     module = proj.module("text", SLUGIFY)
@@ -91,12 +105,35 @@ def test_blocks_edited_and_drifted_conflict(proj, capsys):
     assert "out of sync" in capsys.readouterr().out
 
 
-def test_method_is_rejected_with_a_clear_message(proj, capsys):
+def test_merges_a_method_into_its_class(proj):
     module = proj.module("ver", METHOD)
-    proj.generate(module, "Version.bump", "def bump(self): ...", spec_hash="x")
+    proj.generate(
+        module, "Version.bump", 'def bump(self) -> "Version":\n    return Version(self.major + 1)'
+    )
 
-    assert run_merge(proj.root, [module], merge_all=False, dry_run=False) == 1
-    assert "methods is not supported" in capsys.readouterr().out
+    assert run_merge(proj.root, [module], merge_all=False, dry_run=False) == 0
+
+    source = proj.source_of(module).read_text()
+    assert "@jiti" not in source
+    assert "from jiti import jiti" not in source
+    assert "    def bump(self)" in source  # indented under the class
+    assert "return Version(self.major + 1)" in source
+
+
+def test_merge_method_preserves_sibling_methods(proj):
+    module = proj.module("counter", METHOD_WITH_SIBLING)
+    proj.generate(
+        module, "Counter.step", "def step(self) -> int:\n    self.count += 1\n    return self.count"
+    )
+
+    run_merge(proj.root, [module], merge_all=False, dry_run=False)
+
+    source = proj.source_of(module).read_text()
+    assert "def __init__(self, start: int)" in source  # sibling untouched
+    assert "self.count = start" in source
+    assert "def step(self) -> int:" in source
+    assert "self.count += 1" in source
+    assert "@jiti" not in source
 
 
 def test_dry_run_writes_nothing(proj, capsys):

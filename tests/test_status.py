@@ -42,14 +42,16 @@ def test_reports_state_and_test_counts(tmp_path, capsys):
     assert "1 kept, 3 scratch" in out
 
 
-def test_marks_methods_as_unmergeable(tmp_path, capsys):
+def test_displays_methods_alongside_functions(tmp_path, capsys):
     _write_impl(tmp_path / ".jiti", "app.m", "Version.bump")
 
     cli.status(tmp_path)
     out = capsys.readouterr().out
 
-    assert "method" in out
-    assert "not supported yet" in out
+    assert "Version.bump" in out
+    assert "clean" in out
+    assert "not supported" not in out
+    assert "1 method(s)" in out  # still surfaced in the summary line
 
 
 def test_does_not_import_source_modules(tmp_path, capsys):

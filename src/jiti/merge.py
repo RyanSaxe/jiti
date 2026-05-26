@@ -34,17 +34,20 @@ from jiti.validate import RUFF
 
 
 def merge_into_source(
-    source: str, name: str, own_module: str, section_body: str, file_imports: str
+    source: str, qualname: str, own_module: str, section_body: str, file_imports: str
 ) -> str:
-    """Return `source` with the `@jiti` stub `name` replaced by its generated implementation.
+    """Return `source` with the `@jiti` stub `qualname` replaced by its generated implementation.
 
     `section_body` is the generated unit (helpers + public function, no markers); `file_imports`
     is the companion's hoisted import block; `own_module` is the module being merged into, whose
-    self-imports are dropped (the symbols already live in the file).
+    self-imports are dropped (the symbols already live in the file). For a method qualname
+    (`Class.method`), the splice descends into the class body and re-indents the section.
     """
-    node = _find_jiti_def(ast.parse(source), name)
+    node = _find_jiti_def_at(ast.parse(source), qualname)
+    # TODO: support @classmethod/@staticmethod stacking — needs the extra decorator captured in
+    # Declaration and re-emitted here.
     if any(not _is_jiti_decorator(decorator) for decorator in node.decorator_list):
-        raise MergeError(f"cannot merge `{name}`: it carries decorators other than @jiti.")
+        raise MergeError(f"cannot merge `{qualname}`: it carries decorators other than @jiti.")
     spliced = _splice(source.splitlines(), node, section_body)
     needed = _strip_self_imports(file_imports, own_module)
     if needed:
@@ -129,8 +132,6 @@ def run_merge(root: Path, targets: Sequence[str], merge_all: bool, dry_run: bool
 def _gate(
     ref: SectionRef, sources: dict[str, Path], store: JitiStore
 ) -> tuple[SectionRef, Path, Action]:
-    if ref.is_method:
-        raise MergeError("merging methods is not supported yet")
     source_path = sources.get(ref.module)
     if source_path is None:
         raise MergeError(f"source file for `{ref.module}` not found; regenerate or clear")
@@ -143,7 +144,7 @@ def _gate(
 def _apply(ref: SectionRef, source_path: Path, mirror: Path) -> None:
     imports, _ = parse_file(ref.impl_path.read_text())
     new_source = merge_into_source(
-        source_path.read_text(), ref.name, ref.module, ref.section.body, imports
+        source_path.read_text(), ref.qualname, ref.module, ref.section.body, imports
     )
     write_source(source_path, new_source)
     drop_section(ref.impl_path, ref.key)
@@ -152,30 +153,46 @@ def _apply(ref: SectionRef, source_path: Path, mirror: Path) -> None:
 
 def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Action:
     import_file(source_path)
-    module = sys.modules.get(ref.module)
-    wrapper = getattr(module, ref.name, None) if module is not None else None
-    if not isinstance(wrapper, _JitiCallable):
+    target: object | None = sys.modules.get(ref.module)
+    for part in ref.qualname.split("."):
+        target = getattr(target, part, None)
+        if target is None:
+            break
+    if not isinstance(target, _JitiCallable):
         raise MergeError(f"no @jiti `{ref.qualname}` in {source_path.name}; regenerate or clear")
-    return store.resolve(wrapper.declaration()).action
+    return store.resolve(target.declaration()).action
 
 
 def _any_jiti_left(sources: dict[str, Path]) -> bool:
     return any("@jiti" in path.read_text() for path in set(sources.values()))
 
 
-def _find_jiti_def(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
-    """The single top-level `@jiti`-decorated def named `name` (ignores `@overload` siblings)."""
+def _find_jiti_def_at(tree: ast.Module, qualname: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    """The single `@jiti`-decorated def named by `qualname`, descending through ClassDef parts."""
+    parts = qualname.split(".")
+    container: ast.Module | ast.ClassDef = tree
+    for class_name in parts[:-1]:
+        nested = next(
+            (n for n in container.body if isinstance(n, ast.ClassDef) and n.name == class_name),
+            None,
+        )
+        if nested is None:
+            raise MergeError(f"no class `{class_name}` in source while merging `{qualname}`.")
+        container = nested
+    name = parts[-1]
     matches = [
         node
-        for node in tree.body
+        for node in container.body
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         and node.name == name
         and any(_is_jiti_decorator(decorator) for decorator in node.decorator_list)
     ]
     if not matches:
-        raise MergeError(f"no @jiti-decorated `{name}` found to merge.")
+        raise MergeError(f"no @jiti-decorated `{qualname}` found to merge.")
     if len(matches) > 1:
-        raise MergeError(f"found {len(matches)} @jiti `{name}` definitions; cannot merge safely.")
+        raise MergeError(
+            f"found {len(matches)} @jiti `{qualname}` definitions; cannot merge safely."
+        )
     return matches[0]
 
 
@@ -192,7 +209,16 @@ def _splice(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef, body
     """Replace the def's full span — decorators through last body line — with `body`."""
     start = min((decorator.lineno for decorator in node.decorator_list), default=node.lineno)
     end = node.end_lineno or node.lineno
-    return "\n".join(lines[: start - 1] + body.splitlines() + lines[end:])
+    body_lines = _reindent(body, node.col_offset).splitlines()
+    return "\n".join(lines[: start - 1] + body_lines + lines[end:])
+
+
+def _reindent(body: str, col_offset: int) -> str:
+    """Indent every non-empty line by `col_offset` spaces — for splicing into a class body."""
+    if col_offset == 0:
+        return body
+    prefix = " " * col_offset
+    return "\n".join(prefix + line if line else line for line in body.splitlines())
 
 
 def _strip_self_imports(imports: str, own_module: str) -> str:

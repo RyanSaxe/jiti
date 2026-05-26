@@ -38,7 +38,10 @@ class Project:
 
     def spec_hash(self, module: str, name: str) -> str:
         import_file(self.source_of(module))
-        return getattr(sys.modules[module], name).declaration().spec_hash
+        target: object = sys.modules[module]
+        for part in name.split("."):
+            target = getattr(target, part)
+        return target.declaration().spec_hash
 
     def generate(
         self,
