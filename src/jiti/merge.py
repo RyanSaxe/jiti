@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ast
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -19,6 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from jiti.declaration import is_stub_node
 from jiti.decorator import _JitiCallable
 from jiti.discovery import import_file, import_test_modules, module_name, walk_py_files
 from jiti.errors import MergeError
@@ -32,6 +32,7 @@ from jiti.store import (
     inventory,
     parse_file,
     remove_empty_dirs,
+    scratch_promote,
     test_path_for_module,
 )
 from jiti.validate import RUFF
@@ -60,8 +61,9 @@ def merge_into_source(
 
 
 def write_source(path: Path, text: str) -> None:
-    """Atomically replace a source file, then fix its imports and format it with ruff."""
-    atomic_write(path, text if text.endswith("\n") else text + "\n", _ruff_fix_and_format)
+    """Atomically replace `path`. Ruff is deferred to `_ruff_batch` at the end of `run_merge`,
+    so a multi-target merge runs `ruff check` and `ruff format` exactly once across all files."""
+    atomic_write(path, text if text.endswith("\n") else text + "\n")
 
 
 def source_files(root: Path) -> dict[str, Path]:
@@ -120,8 +122,8 @@ def run_merge(
     chosen = list(refs) if merge_all else select(targets, refs)
     sources = source_files(root)
     store = JitiStore(mirror)
-    # Import test modules so each merged target's @jiti.required_for gates are registered on
-    # its wrapper — _gate_locations_for reads them off the wrapper a few lines down.
+    # required_for gates contribute to each declaration's spec hash, so test modules must be
+    # imported before the gate check below — otherwise the check sees a stale spec.
     import_test_modules([str(root)])
 
     plans: list[tuple[SectionRef, Path, Action]] = []
@@ -133,19 +135,21 @@ def run_merge(
             print(f"skip {ref.key}: {error}")
             blocked = blocked or not merge_all
 
-    # Capture each merged ref's gate locations before _apply rewrites source (which strips the
-    # @jiti decorator and so renders the wrapper unimportable for any later runs in this process).
+    # `_apply` strips @jiti from source, leaving the wrapper unreachable via import. Snapshot
+    # each ref's gate locations now while the wrapper is still bound to the user's stub.
     gate_index: dict[str, list[_GateLocation]] = {
         ref.key: _gate_locations_for(ref) for ref, _, _ in plans
     }
 
+    written: list[Path] = []
     for ref, source_path, action in plans:
         if not dry_run:
-            _apply(ref, source_path, mirror, keep_test_section=True)
+            written.append(_apply(ref, source_path))
         print(f"{'would merge' if dry_run else 'merged'} {ref.key}  ({action.value})")
 
     if not dry_run and plans:
-        _merge_test_files(root, mirror, plans, gate_index, prune_scratch)
+        written.extend(_merge_test_files(root, mirror, plans, gate_index, prune_scratch))
+        _ruff_batch(written)
         remove_empty_dirs(mirror)
         if not _any_jiti_left(sources):
             print("no @jiti remains — you can drop jiti from your dependencies.")
@@ -165,27 +169,33 @@ def _gate(
     return ref, source_path, action
 
 
-def _apply(ref: SectionRef, source_path: Path, mirror: Path, keep_test_section: bool) -> None:
+def _apply(ref: SectionRef, source_path: Path) -> Path:
+    """Inline the section into source, drop the impl section. Returns `source_path` for ruff."""
     imports, _ = parse_file(ref.impl_path.read_text())
     new_source = merge_into_source(
         source_path.read_text(), ref.qualname, ref.module, ref.section.body, imports
     )
     write_source(source_path, new_source)
     drop_section(ref.impl_path, ref.key)
-    if not keep_test_section:
-        drop_section(test_path_for_module(mirror, ref.module), ref.key)
+    return source_path
 
 
 def _resolve_state(ref: SectionRef, source_path: Path, store: JitiStore) -> Action:
     import_file(source_path)
-    target: object | None = sys.modules.get(ref.module)
-    for part in ref.qualname.split("."):
-        target = getattr(target, part, None)
-        if target is None:
-            break
-    if not isinstance(target, _JitiCallable):
+    target = _resolve_wrapper(ref.module, ref.qualname)
+    if target is None:
         raise MergeError(f"no @jiti `{ref.qualname}` in {source_path.name}; regenerate or clear")
     return store.resolve(target.declaration()).action
+
+
+def _resolve_wrapper(module: str, qualname: str) -> _JitiCallable | None:
+    """Walk `module.qualname` through `sys.modules`; return the wrapper if it's still a stub."""
+    target: object | None = sys.modules.get(module)
+    for part in qualname.split("."):
+        target = getattr(target, part, None)
+        if target is None:
+            return None
+    return target if isinstance(target, _JitiCallable) else None
 
 
 def _any_jiti_left(sources: dict[str, Path]) -> bool:
@@ -202,24 +212,17 @@ class _GateLocation:
 
 def _gate_locations_for(ref: SectionRef) -> list[_GateLocation]:
     """Where each gate registered on `ref`'s wrapper lives in source. Empty if there are none."""
-    target: object | None = sys.modules.get(ref.module)
-    for part in ref.qualname.split("."):
-        target = getattr(target, part, None)
-        if target is None:
-            return []
-    if not isinstance(target, _JitiCallable):
+    target = _resolve_wrapper(ref.module, ref.qualname)
+    if target is None:
         return []
-    locations: list[_GateLocation] = []
-    for gate in target._gates:
-        if gate.test is None:
-            continue
-        locations.append(
-            _GateLocation(
-                test_path=Path(gate.test.__code__.co_filename).resolve(),
-                test_name=gate.test.__name__,
-            )
+    return [
+        _GateLocation(
+            test_path=Path(gate.test.__code__.co_filename).resolve(),
+            test_name=gate.test.__name__,
         )
-    return locations
+        for gate in target._gates
+        if gate.test is not None
+    ]
 
 
 def _merge_test_files(
@@ -228,19 +231,42 @@ def _merge_test_files(
     plans: list[tuple[SectionRef, Path, Action]],
     gate_index: dict[str, list[_GateLocation]],
     prune_scratch: bool,
-) -> None:
+) -> list[Path]:
     """Fold mirror test sections back into source: drop @jiti.required_for decorators, splice
-    generated stub bodies, and either eject agent scratch tests or drop them (--prune)."""
+    generated stub bodies, and either eject agent scratch tests or drop them (--prune). Returns
+    the list of files written (so `_ruff_batch` can format them in one pass)."""
+    user_tests = _rewrite_required_for_tests(mirror, plans, gate_index)
+    scratch = _handle_scratch_tests(root, mirror, plans, gate_index, prune_scratch)
+    return user_tests + scratch
+
+
+def _rewrite_required_for_tests(
+    mirror: Path,
+    plans: list[tuple[SectionRef, Path, Action]],
+    gate_index: dict[str, list[_GateLocation]],
+) -> list[Path]:
     by_test_file: dict[Path, set[str]] = defaultdict(set)
     for ref, _, _ in plans:
         for loc in gate_index[ref.key]:
             by_test_file[loc.test_path].add(loc.test_name)
+    written: list[Path] = []
     for test_path, test_names in by_test_file.items():
-        _rewrite_user_test_file(test_path, mirror, root, test_names)
+        if (path := _rewrite_user_test_file(test_path, mirror, test_names)) is not None:
+            written.append(path)
+    return written
 
+
+def _handle_scratch_tests(
+    root: Path,
+    mirror: Path,
+    plans: list[tuple[SectionRef, Path, Action]],
+    gate_index: dict[str, list[_GateLocation]],
+    prune_scratch: bool,
+) -> list[Path]:
     by_module: dict[str, list[SectionRef]] = defaultdict(list)
     for ref, _, _ in plans:
         by_module[ref.module].append(ref)
+    written: list[Path] = []
     for module, refs in by_module.items():
         scratch_path = test_path_for_module(mirror, module)
         if not scratch_path.exists():
@@ -248,15 +274,16 @@ def _merge_test_files(
         if prune_scratch:
             for ref in refs:
                 drop_section(scratch_path, ref.key)
-        else:
-            _eject_module_scratch(scratch_path, refs, root, gate_index)
+        elif (path := _eject_module_scratch(scratch_path, refs, root, gate_index)) is not None:
+            written.append(path)
+    return written
 
 
-def _rewrite_user_test_file(
-    test_path: Path, mirror: Path, root: Path, test_names: set[str]
-) -> None:
-    """Drop `@jiti.required_for` decorators on the named tests, splicing stub bodies from mirror."""
-    test_module = _module_dotted(test_path, root)
+def _rewrite_user_test_file(test_path: Path, mirror: Path, test_names: set[str]) -> Path | None:
+    """Drop `@jiti.required_for` decorators on the named tests, splicing stub bodies from mirror.
+
+    Returns `test_path` if it was rewritten; `None` if nothing matched."""
+    test_module, _ = module_name(test_path)
     mirror_test = test_path_for_module(mirror, test_module)
     try:
         _, mirror_sections = parse_file(mirror_test.read_text())
@@ -267,13 +294,14 @@ def _rewrite_user_test_file(
     tree = ast.parse(source)
     edits, spliced_keys = _plan_test_file_edits(tree, test_module, test_names, mirror_sections)
     if not edits:
-        return
+        return None
     lines = source.splitlines()
     for start, end, replacement in sorted(edits, key=lambda e: -e[0]):
         lines = lines[: start - 1] + replacement + lines[end:]
     write_source(test_path, "\n".join(lines).rstrip("\n") + "\n")
     for key in spliced_keys:
         drop_section(mirror_test, key)
+    return test_path
 
 
 def _plan_test_file_edits(
@@ -295,7 +323,7 @@ def _plan_test_file_edits(
             continue
         section_key = f"{test_module}.{node.name}"
         section = mirror_sections.get(section_key)
-        if _is_stub_body(node) and section is not None:
+        if is_stub_node(node) and section is not None:
             start = min(d.lineno for d in node.decorator_list)
             end = node.end_lineno or node.lineno
             edits.append((start, end, section.body.splitlines()))
@@ -311,68 +339,70 @@ def _eject_module_scratch(
     refs: list[SectionRef],
     root: Path,
     gate_index: dict[str, list[_GateLocation]],
-) -> None:
-    """Append scratch tests for `refs` to a project test file, promoting `test_scratch_*` →
-    `test_*` so pytest treats them as real tests rather than scratch. Imports from the mirror
-    scratch file are merged into the destination's import block; functions whose names already
-    exist in the destination are skipped to avoid silent overrides."""
+) -> Path | None:
+    """Promote scratch tests for `refs` into a project test file (`test_scratch_*` →
+    `test_*`), then drop the mirror sections. Imports from the mirror scratch file are merged
+    into the destination's import block; defs whose names already exist in the destination are
+    skipped to avoid silent overrides.
+
+    Returns the destination path if anything was written; `None` if every promoted def would
+    have collided (in which case the mirror sections are still dropped)."""
     scratch_imports, sections = parse_file(scratch_path.read_text())
     keys = [ref.key for ref in refs if ref.key in sections]
     if not keys:
-        return
+        return None
     destination = _scratch_destination(refs, root, gate_index)
-    existing_names = _toplevel_function_names(destination) if destination.exists() else set()
-    promoted_bodies: list[str] = []
-    for key in keys:
-        body = _drop_conflicting_defs(_promote_scratch(sections[key].body), existing_names)
-        if body.strip():
-            promoted_bodies.append(body)
-            existing_names.update(_toplevel_names_in(body))
-    if not promoted_bodies:
-        for key in keys:
-            drop_section(scratch_path, key)
-        return
-    block = f"{_PROMOTED_BEGIN}\n{'\n\n\n'.join(promoted_bodies)}\n{_PROMOTED_END}\n"
-    if destination.exists():
-        existing = destination.read_text()
-        with_imports = _inject_imports(existing, scratch_imports) if scratch_imports else existing
-        if not with_imports.endswith("\n"):
-            with_imports += "\n"
-        new_text = f"{with_imports}\n\n{block}"
-    else:
+    block = _promoted_block([sections[key] for key in keys], destination)
+    written = block is not None
+    if written:
+        new_text = _splice_promoted_block(destination, scratch_imports, block)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        write_source(destination, new_text)
+    for key in keys:
+        drop_section(scratch_path, key)
+    return destination if written else None
+
+
+def _promoted_block(sections: list[Section], destination: Path) -> str | None:
+    """Build the begin/end-marked block of promoted scratch tests, skipping name collisions."""
+    existing = _toplevel_def_names(destination.read_text()) if destination.exists() else set()
+    bodies: list[str] = []
+    for section in sections:
+        body = _drop_conflicting_defs(scratch_promote(section.body), existing)
+        if body.strip():
+            bodies.append(body)
+            existing.update(_toplevel_def_names(body))
+    if not bodies:
+        return None
+    return f"{_PROMOTED_BEGIN}\n{'\n\n\n'.join(bodies)}\n{_PROMOTED_END}\n"
+
+
+def _splice_promoted_block(destination: Path, scratch_imports: str, block: str) -> str:
+    """Return the destination's full new text: existing content + injected imports + block."""
+    if not destination.exists():
         preamble = (
             f"{_PROMOTED_HEADER}\n{scratch_imports}\n\n" if scratch_imports else _PROMOTED_HEADER
         )
-        new_text = f"{preamble}\n{block}"
-    write_source(destination, new_text)
-    for key in keys:
-        drop_section(scratch_path, key)
+        return f"{preamble}\n{block}"
+    existing = destination.read_text()
+    with_imports = _inject_imports(existing, scratch_imports) if scratch_imports else existing
+    if not with_imports.endswith("\n"):
+        with_imports += "\n"
+    return f"{with_imports}\n\n{block}"
 
 
-def _toplevel_function_names(path: Path) -> set[str]:
-    """Top-level function (and class) names defined in `path`."""
-    return _toplevel_names_in(path.read_text())
-
-
-def _toplevel_names_in(source: str) -> set[str]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return set()
+def _toplevel_def_names(source: str) -> set[str]:
+    """Top-level FunctionDef / AsyncFunctionDef / ClassDef names in `source`."""
     return {
         node.name
-        for node in tree.body
+        for node in ast.parse(source).body
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
     }
 
 
 def _drop_conflicting_defs(body: str, existing_names: set[str]) -> str:
     """Remove top-level defs from `body` whose names are already in `existing_names`."""
-    try:
-        tree = ast.parse(body)
-    except SyntaxError:
-        return body
+    tree = ast.parse(body)
     drop: set[int] = set()
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -386,11 +416,6 @@ def _drop_conflicting_defs(body: str, existing_names: set[str]) -> str:
         return body
     lines = body.splitlines()
     return "\n".join(line for i, line in enumerate(lines, 1) if i not in drop).strip("\n")
-
-
-def _promote_scratch(body: str) -> str:
-    """Promote scratch tests: rename `def test_scratch_*(...)` to `def test_*(...)`."""
-    return re.sub(r"\bdef test_scratch_", "def test_", body)
 
 
 _PROMOTED_HEADER = (
@@ -435,11 +460,6 @@ def _conventional_test_path(root: Path, impl_module: str) -> Path:
     return root / "tests" / relpath.parent / basename
 
 
-def _module_dotted(path: Path, root: Path) -> str:
-    """Dotted module name for `path`, relative to `root` (used to key mirror sections)."""
-    return ".".join(path.resolve().relative_to(root.resolve()).with_suffix("").parts)
-
-
 def _is_required_for_decorator(node: ast.expr) -> bool:
     """True for `@jiti.required_for(...)`."""
     if not isinstance(node, ast.Call):
@@ -451,31 +471,6 @@ def _is_required_for_decorator(node: ast.expr) -> bool:
         and isinstance(func.value, ast.Name)
         and func.value.id == "jiti"
     )
-
-
-def _is_stub_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if the function body is only a docstring and/or placeholders (`...`, `pass`)."""
-    body = list(node.body)
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
-    if not body:
-        return True
-    for stmt in body:
-        if isinstance(stmt, ast.Pass):
-            continue
-        if (
-            isinstance(stmt, ast.Expr)
-            and isinstance(stmt.value, ast.Constant)
-            and stmt.value.value is Ellipsis
-        ):
-            continue
-        return False
-    return True
 
 
 def _find_jiti_def_at(tree: ast.Module, qualname: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
@@ -621,7 +616,12 @@ def _import_anchor(tree: ast.Module) -> int:
     return 0
 
 
-def _ruff_fix_and_format(path: Path) -> None:
-    fix = [*RUFF, "check", "--fix", "--select", "F401,I", "--quiet", str(path)]
-    subprocess.run(fix, capture_output=True)
-    subprocess.run([*RUFF, "format", "--quiet", str(path)], capture_output=True)
+def _ruff_batch(paths: Sequence[Path]) -> None:
+    """Run `ruff check --fix --select F401,I` then `ruff format` over `paths` in one pass each."""
+    if not paths:
+        return
+    args = [str(p) for p in paths]
+    subprocess.run(
+        [*RUFF, "check", "--fix", "--select", "F401,I", "--quiet", *args], capture_output=True
+    )
+    subprocess.run([*RUFF, "format", "--quiet", *args], capture_output=True)

@@ -39,6 +39,7 @@ def content_hash(text: str) -> str:
 
 
 _AGENT_TEST_DEF = re.compile(r"^def test_(?!scratch_)", re.MULTILINE)
+_SCRATCH_TEST_DEF = re.compile(r"\bdef test_scratch_")
 
 
 def scratch_rename(source: str) -> str:
@@ -48,6 +49,11 @@ def scratch_rename(source: str) -> str:
     are scratch, so a later `jiti test prune`/`keep` can drop or promote them by this prefix.
     """
     return _AGENT_TEST_DEF.sub("def test_scratch_", source)
+
+
+def scratch_promote(source: str) -> str:
+    """The inverse of `scratch_rename`: strip `test_scratch_` prefixes back to `test_*`."""
+    return _SCRATCH_TEST_DEF.sub("def test_", source)
 
 
 @dataclass(frozen=True)

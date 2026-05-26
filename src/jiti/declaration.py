@@ -114,7 +114,11 @@ def introspect(
 def is_stub(func: types.FunctionType) -> bool:
     """True if the body is only a docstring and placeholders (`...`, `pass`, `raise`)."""
     source = textwrap.dedent(inspect.getsource(func))
-    node = _function_node(source, func.__name__)
+    return is_stub_node(_function_node(source, func.__name__))
+
+
+def is_stub_node(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True if `node`'s body is only a docstring and placeholders (`...`, `pass`, `raise`)."""
     return all(_is_placeholder(statement) for statement in _body_without_docstring(node))
 
 
