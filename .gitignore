@@ -19,3 +19,6 @@ htmlcov/
 
 # environment variables file
 .env
+
+# local feature backlog (not part of the published project)
+backlog/
