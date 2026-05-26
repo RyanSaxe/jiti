@@ -1,10 +1,25 @@
 # jiti
 
 [![CI](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml/badge.svg)](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/jiti.svg)](https://pypi.org/project/jiti/)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Write the signature and the docstring. Let an agent write the body.
+**Interface-first Python.** Declare the interfaces, wire them into a call graph, run the
+program — an LLM writes the implementations the first time each one is called, and the
+result is real, committable code that you keep.
+
+## The idea
+
+You decide *what*: typed signatures, docstrings, and tests. You decide *how the pieces
+fit*: which function calls which. Then you run, and bodies appear just in time, get
+validated against ruff + ty + your tests, and land as plain Python under `.jiti/`. Every
+call after that is plain dispatch — no model, no API key, no network. When you're ready,
+`jiti merge` folds the generated code back into your source and removes the decorator.
+
+You can stop using jiti at any time and keep everything it wrote.
+
+## A tiny example
 
 ```python
 from jiti import jiti
@@ -16,29 +31,61 @@ def slugify(text: str) -> str:
     ...
 ```
 
-The first time `slugify` runs, an agent looks at the real arguments, explores your repo, and
-writes an implementation into a `.jiti/` file beside your source — checked with ruff, ty, and
-tests before it's saved. Every call after that is plain Python. No model, no API key, no network.
+The first call to `slugify("Hello, World!")` runs an agent that inspects the real
+arguments, explores your repo, drafts code, runs ruff + ty + any tests you've gated on it,
+and writes the result to a file beside your source. Every call after that runs that file.
 
-That's the whole point: jiti generates real, committable code **once** and gets out of the way.
-It is not an "AI function" that calls a model on every invocation.
+## Wiring a graph
+
+Interface-first pays off when interfaces compose. You write the orchestration in plain
+Python — that's *your* code, and that's where the graph lives. jiti writes the leaves.
+
+```python
+from jiti import jiti
+
+
+@jiti
+def satisfies(version: str, spec: str) -> bool:
+    """True if `version` satisfies `spec`. Specs: exact, '>=', '>', '<=', '<', '~', '^'."""
+    ...
+
+
+@jiti
+def sort_versions(versions: list[str]) -> list[str]:
+    """Return the version strings sorted ascending by semver precedence."""
+    ...
+
+
+# Your code — plain Python — composing the jiti pieces:
+def latest_matching(versions: list[str], spec: str) -> str | None:
+    """Return the highest-precedence version satisfying `spec`, or None."""
+    candidates = [v for v in versions if satisfies(v, spec)]
+    return sort_versions(candidates)[-1] if candidates else None
+```
+
+`latest_matching` is yours — no decorator, no magic, just a function. The first call to
+`latest_matching(["1.0.0", "2.0.0", "2.1.3"], "^2.0.0")` runs your code, which calls
+`satisfies` and `sort_versions`, which jiti generates on demand (and which may themselves
+need other stubs along the way — generation cascades). Every call after that is plain
+dispatch.
+
+The full runnable version (with a `Version` dataclass, more stubs, and a method) lives in
+[`examples/semver/`](examples/semver/).
 
 ## Install
 
-Needs Python 3.13+. Not on PyPI yet:
-
 ```bash
-git clone https://github.com/RyanSaxe/jiti && cd jiti
-uv pip install -e .
+pip install jiti     # or: uv add jiti
 ```
 
-Set `ANTHROPIC_API_KEY` to generate code. Running already-generated code needs nothing.
+Needs Python 3.13+. Set `ANTHROPIC_API_KEY` to generate code. Running already-generated
+code needs nothing — no key, no network.
 
 ## Stubs
 
-A stub is a function with a docstring and a placeholder body — `...`, `pass`, or
-`raise NotImplementedError`. A real body is an error: `@jiti` means "write this for me." Add a
-comment and jiti treats it as a hint:
+A stub is a function with a docstring and a placeholder body: `...`, `pass`, or
+`raise NotImplementedError`. A real body is an error — `@jiti` means "write this for me."
+A comment in the stub becomes a hint:
 
 ```python
 @jiti
@@ -48,16 +95,17 @@ def parse_money(raw: str) -> Decimal:
     ...
 ```
 
-Methods work too — write the class, decorate the methods you want generated, use `self` freely.
+Methods work the same way — decorate the methods you want generated, use `self` freely
+(see `Version.bump` in `examples/semver/core.py`).
 
-> Strict type checkers flag an empty body with a non-`None` return (`empty-body`). That's your
-> checker reacting to the stub, not jiti. Disable that rule or use `raise NotImplementedError`.
+> Strict type checkers flag an empty body with a non-`None` return (`empty-body`). That's
+> your checker reacting to the stub, not jiti. Disable that rule or use `raise NotImplementedError`.
 
 ## Test-driven generation
 
 State a function's definition of done from your test file with `@jiti.required_for(target)`.
-Tests import the real code, so the reference is type-checked — and running `pytest` *is* the
-loop: generation happens to make your tests pass, red → green.
+Tests import the real code, so the reference is type-checked — and running `pytest` *is*
+the loop: generation happens to make your tests pass, red → green.
 
 ```python
 # tests/test_money.py
@@ -76,63 +124,43 @@ def test_rejects_garbage() -> None:
     ...
 ```
 
-An empty-bodied stub is a **jiti-test**: written before the implementation exists, so it can
-only see the interface and can't couple to internals. jiti writes it, commits it under
-`.jiti/tests/`, and gates the implementation on it. Both are ordinary `test_*` functions your
-own `pytest` run executes.
+An empty-bodied stub is a **jiti-test**: written before the implementation exists, so it
+can only see the interface and can't couple to internals. jiti writes it, commits it
+under `.jiti/tests/`, and gates the implementation on it. Both are ordinary `test_*`
+functions your own `pytest` run executes.
 
-Gates only register when their test file is imported. pytest does that on collection; for
-generation outside a test run, jiti imports your test modules first — scanning the tree by
-default, or `Engine(test_paths=("tests",))` to narrow it.
+## Graduating off jiti
 
-## Configuration
-
-Pass your own engine for a custom client, model, store, or thresholds:
-
-```python
-from jiti import Engine, jiti
-
-@jiti(engine=Engine(quality_threshold=8))
-def slugify(text: str) -> str: ...
-```
-
-Two prose guides shape what the agent writes — a **style guide** (how code reads) and a **test
-guide** (how tests read). Defaults ship with jiti; override either with `Engine(style=...)` /
-`Engine(test_guide=...)`, a `JITI_STYLE` / `JITI_TESTS` env path, or a `jiti.style.md` /
-`jiti.tests.md` in your project root. All prompt text lives in `src/jiti/prompts/`.
-
-`JITI_LOG=info` logs each model call; `JITI_LOG=debug` adds tool calls. `jiti.clear()` (or
-`rm -rf .jiti`) drops the cache.
-
-## The CLI
-
-`jiti` ships a small command-line tool for inspecting and graduating generated code:
+Interface-first is a *development mode* you can leave. `jiti merge` folds the generated
+implementation back into your source, replaces the stub, removes `@jiti`, and cleans up
+the mirror:
 
 ```bash
-jiti status                  # what's generated, and what you've hand-edited (read-only)
-jiti merge app.text.slugify  # inline one function into its source, drop @jiti
-jiti merge --all             # …graduate the whole project off jiti
-jiti test prune              # delete the agent's scratch tests (test_scratch_*)
-jiti clear                   # delete .jiti/
+jiti status                  # what's generated, what you've hand-edited
+jiti merge app.text.slugify  # inline one function into its source
+jiti merge --all             # graduate the entire project
 ```
 
-`merge` is how you graduate: it folds the generated implementation back into your source file,
-replacing the stub and removing `@jiti`, then cleans up the mirror — so `merge --all` is the
-"I'm done with jiti" button (it leaves you plain Python and tells you when you can drop the
-dependency). A target can be a file path, a dotted module, or a qualname; `--dry-run` previews.
-Merge refuses sections that have drifted from their source (regenerate first) and, for now,
-methods. `jiti test keep <name>` rescues a scratch test by un-prefixing it.
+After `merge --all`, you have plain Python, no jiti dependency required. See
+[`docs/reference.md`](docs/reference.md) for the full CLI and configuration surface.
 
 ## A few things worth knowing
 
-- **The code is yours.** Edit a generated body and jiti runs it as-is — it tracks a hash and
-  won't clobber your edits. Change a stub's signature, docstring, or gates and it regenerates;
-  if you'd hand-edited that section, it surfaces a conflict instead of overwriting.
-- **git is yours.** jiti only writes files into `.jiti/`. Commit it (so production runs cached
-  code with no key) or gitignore it. jiti never runs git.
-- **Concurrency.** Running generated code is fully safe — it's plain dispatch. *Generating* does
-  no locking, so warm the cache once single-threaded, then parallelize. Writes are atomic, so a
-  reader never sees a half-written file.
+- **The code is yours.** Edit a generated body and jiti runs it as-is — it tracks a hash
+  and won't clobber your edits. Change a stub's signature, docstring, or gates and it
+  regenerates; if you'd hand-edited that section, it surfaces a conflict instead.
+- **git is yours.** jiti only writes files into `.jiti/`. Commit it (so production runs
+  cached code with no key) or gitignore it. jiti never runs git.
+- **Concurrency.** Running generated code is fully safe — it's plain dispatch. *Generating*
+  does no locking, so warm the cache once single-threaded, then parallelize. Writes are
+  atomic, so a reader never sees a half-written file.
+
+## Where to go next
+
+- [`examples/semver/`](examples/semver/) — a runnable interface-first walkthrough: stubs,
+  a graph, tests, and the `merge` graduation.
+- [`docs/reference.md`](docs/reference.md) — every `Engine` knob, env var, and CLI flag.
+- [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Development
 
@@ -141,23 +169,22 @@ uv sync
 uv run pre-commit install
 ```
 
-The gate, exactly what CI runs — ruff-format, ruff, ty, then pytest (no API key; uses a fake
-client):
+The gate, exactly what CI runs — ruff-format, ruff, ty, then pytest (no API key; uses a
+fake client):
 
 ```bash
 uv run pre-commit run --all-files
 uv run pytest
 ```
 
-`examples/semver/` is a runnable TDD spec: semver stubs with tests under
-`examples/semver/tests/`. Run pytest there to watch jiti build the library.
-
 ## Status
 
-Early. Today: free functions and methods, lazy agentic generation, in-process validation with
-cascading generation, test-driven generation via `@jiti.required_for` with a score-gated
-refactor pass, the edit/conflict lifecycle, the `jiti` CLI (`status`/`merge`/`test`/`clear`),
-and Anthropic. Scoped to pure functions.
+Today, jiti supports free functions and methods, lazy agentic generation with cascading
+across the call graph, in-process validation (ruff + ty + pytest), test-driven generation
+via `@jiti.required_for` (works on free functions and methods), a score-gated refactor
+pass, the edit/conflict lifecycle, and the `jiti` CLI (`status` / `merge` / `test` /
+`clear`). Anthropic only.
 
-Not yet: `required_for` on methods, `merge` of methods, a pytest plugin, whole-class generation,
-multiple providers, and dependency-aware invalidation.
+Not yet: `merge` of methods that carry stacked decorators (`@classmethod`,
+`@staticmethod`), a pytest plugin, whole-class generation, multiple model providers,
+and dependency-aware invalidation.
