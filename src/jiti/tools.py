@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import io
-import re
+import shutil
 import subprocess
 import sys
 import traceback
@@ -23,6 +23,30 @@ from jiti._log import logger
 from jiti.declaration import Declaration, Gate
 from jiti.errors import JitiError
 from jiti.validate import MethodPatch, cap, validate
+
+_RG_INSTALL_HINT = (
+    "jiti's `grep` tool requires `rg` (ripgrep) on PATH. Install:\n"
+    "  macOS:         brew install ripgrep\n"
+    "  Debian/Ubuntu: apt install ripgrep\n"
+    "  Rust:          cargo install ripgrep\n"
+    "See https://github.com/BurntSushi/ripgrep#installation"
+)
+_SG_INSTALL_HINT = (
+    "jiti's `sg` tool requires `sg` (ast-grep) on PATH. Install:\n"
+    "  macOS:         brew install ast-grep\n"
+    "  Debian/Ubuntu: cargo install ast-grep --locked\n"
+    "  Rust:          cargo install ast-grep --locked\n"
+    "See https://ast-grep.github.io/guide/quick-start.html"
+)
+_AVAILABLE_CLIS: dict[str, bool] = {}
+
+
+def _require_cli(binary: str, install_hint: str) -> None:
+    if _AVAILABLE_CLIS.get(binary):
+        return
+    if shutil.which(binary) is None:
+        raise JitiError(install_hint)
+    _AVAILABLE_CLIS[binary] = True
 
 
 def _tool(name: str, description: str, **properties: dict[str, str]) -> dict[str, Any]:
@@ -58,7 +82,15 @@ _READ_FILE = _tool(
 )
 _GREP = _tool(
     "grep",
-    "Search the project's Python files for a regex pattern.",
+    "Search the project's Python files for a regex/substring pattern (ripgrep). For "
+    "structural queries (e.g. find all defs matching a shape), prefer `sg`.",
+    pattern={"type": "string"},
+)
+_SG = _tool(
+    "sg",
+    "Structural code search via ast-grep over the project's Python files. The pattern is an "
+    "AST pattern, not regex: use `$NAME` for a single identifier, `$$$` for any sequence. "
+    "Example: `def $NAME($$$): $$$` finds every function definition.",
     pattern={"type": "string"},
 )
 _SUBMIT = _tool(
@@ -71,7 +103,9 @@ _SUBMIT = _tool(
     quality={
         "type": "integer",
         "description": "Your honest 0-10 rating of the code's quality (readability, structure, "
-        "simplicity). A low rating earns one refactor pass before commit.",
+        "simplicity). Lower the score for: duplication, dead helpers, nesting > 3, a helper "
+        "used once that could be inlined, names that don't reveal intent, error paths that "
+        "swallow information. A low rating earns one refactor pass before commit.",
     },
 )
 _SUBMIT_TEST = _tool(
@@ -81,8 +115,8 @@ _SUBMIT_TEST = _tool(
     impl={"type": "string", "description": "The test function's source (import the target)."},
 )
 
-IMPL_TOOLS: list[dict[str, Any]] = [_INSPECT, _RUN_PYTHON, _READ_FILE, _GREP, _SUBMIT]
-TEST_TOOLS: list[dict[str, Any]] = [_READ_FILE, _GREP, _SUBMIT_TEST]
+IMPL_TOOLS: list[dict[str, Any]] = [_INSPECT, _RUN_PYTHON, _READ_FILE, _GREP, _SG, _SUBMIT]
+TEST_TOOLS: list[dict[str, Any]] = [_READ_FILE, _GREP, _SG, _SUBMIT_TEST]
 
 
 @dataclass
@@ -116,14 +150,21 @@ class CallContext:
         return cap(target.read_text())
 
     def grep(self, pattern: str) -> str:
-        try:
-            found = subprocess.run(
-                ["rg", "--line-number", "--no-heading", pattern, "."],
-                capture_output=True,
-                text=True,
-            ).stdout
-        except FileNotFoundError:
-            found = _python_grep(pattern)
+        _require_cli("rg", _RG_INSTALL_HINT)
+        found = subprocess.run(
+            ["rg", "--line-number", "--no-heading", pattern, "."],
+            capture_output=True,
+            text=True,
+        ).stdout
+        return cap(found) or "(no matches)"
+
+    def sg(self, pattern: str) -> str:
+        _require_cli("sg", _SG_INSTALL_HINT)
+        found = subprocess.run(
+            ["sg", "run", "--pattern", pattern, "--lang", "python", "."],
+            capture_output=True,
+            text=True,
+        ).stdout
         return cap(found) or "(no matches)"
 
     def submit(self, impl: str, tests: str, quality: int = 10) -> str:
@@ -186,13 +227,3 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
         raise  # let jiti's own control-flow errors (e.g. generation cycles) propagate
     except Exception:
         return cap(traceback.format_exc())
-
-
-def _python_grep(pattern: str) -> str:
-    regex = re.compile(pattern)
-    lines: list[str] = []
-    for path in Path.cwd().rglob("*.py"):
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
-            if regex.search(line):
-                lines.append(f"{path}:{number}:{line}")
-    return "\n".join(lines)
