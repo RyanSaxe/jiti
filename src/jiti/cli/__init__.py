@@ -14,6 +14,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from jiti.cli.merge import run_merge, source_files
 from jiti.core.discovery import walk_py_files
 from jiti.core.errors import JitiError
 from jiti.core.store import (
@@ -28,7 +29,6 @@ from jiti.core.store import (
     save_sections,
     test_path_for_module,
 )
-from jiti.merge import run_merge, source_files
 
 
 def status(root: Path) -> int:

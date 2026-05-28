@@ -2,8 +2,8 @@
 
 from textwrap import dedent
 
+from jiti.cli.merge import run_merge
 from jiti.core.store import inventory
-from jiti.merge import run_merge
 
 SLUGIFY = dedent('''\
     from jiti import jiti
