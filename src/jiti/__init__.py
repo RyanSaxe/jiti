@@ -7,17 +7,17 @@ it under `.jiti/`. Every call after that runs that committed code.
 
 from pathlib import Path
 
-from jiti._log import configure
-from jiti.decorator import jiti
-from jiti.engine import Engine
-from jiti.errors import (
+from jiti.agent.engine import Engine
+from jiti.core.errors import (
     ConflictError,
     GenerationCycleError,
     GenerationError,
     JitiError,
     RealBodyError,
 )
-from jiti.store import JitiStore
+from jiti.core.log import configure
+from jiti.core.store import JitiStore
+from jiti.decorator import jiti
 
 configure()
 

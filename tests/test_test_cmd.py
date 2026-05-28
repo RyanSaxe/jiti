@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from jiti import cli
-from jiti.store import Section, content_hash, module_relpath, parse_sections, render_file
+from jiti.core.store import Section, content_hash, module_relpath, parse_sections, render_file
 
 TESTS = """\
 def test_keep_me():

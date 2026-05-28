@@ -14,10 +14,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from jiti.discovery import walk_py_files
-from jiti.errors import JitiError
-from jiti.merge import run_merge, source_files
-from jiti.store import (
+from jiti.cli.merge import run_merge, source_files
+from jiti.core.discovery import walk_py_files
+from jiti.core.errors import JitiError
+from jiti.core.store import (
     JitiStore,
     Section,
     SectionRef,

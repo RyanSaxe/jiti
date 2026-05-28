@@ -2,8 +2,8 @@
 
 from textwrap import dedent
 
-from jiti.merge import run_merge
-from jiti.store import inventory
+from jiti.cli.merge import run_merge
+from jiti.core.store import inventory
 
 SLUGIFY = dedent('''\
     from jiti import jiti
@@ -272,7 +272,7 @@ def test_drops_required_for_decorators_and_splices_stub_bodies(proj):
     # Seed the generated stub body in the mirror keyed by the test function's qualname
     test_section_path = proj.mirror / "tests" / proj.pkg / "test_test_slug.py"
     test_section_path.parent.mkdir(parents=True, exist_ok=True)
-    from jiti.store import Section, content_hash, render_file  # noqa: PLC0415
+    from jiti.core.store import Section, content_hash, render_file  # noqa: PLC0415
 
     key = f"{test_module}.test_stub_body"
     test_section_path.write_text(

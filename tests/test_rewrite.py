@@ -5,8 +5,8 @@ from textwrap import dedent
 
 import pytest
 
-from jiti.errors import MergeError
-from jiti.merge import _is_jiti_decorator, merge_into_source
+from jiti.cli.merge.source import _is_jiti_decorator, merge_into_source
+from jiti.core.errors import MergeError
 
 
 def test_inlines_body_and_drops_the_decorator():

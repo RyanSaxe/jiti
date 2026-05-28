@@ -7,10 +7,10 @@ import pytest
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
-from jiti.declaration import introspect
-from jiti.engine import Engine, _LazyAnthropic
-from jiti.errors import GenerationCycleError
-from jiti.store import JitiStore
+from jiti.agent.engine import Engine, _LazyAnthropic
+from jiti.core.declaration import introspect
+from jiti.core.errors import GenerationCycleError
+from jiti.core.store import JitiStore
 
 GOOD_IMPL = "def slugify(text):\n    return text.lower().replace(' ', '-')"
 BAD_IMPL = "def slugify(text):\n    return text.upper()"

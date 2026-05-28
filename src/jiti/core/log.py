@@ -7,13 +7,20 @@ an approximate cost. Downstream users get nothing by default.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import sys
 from typing import Any, NamedTuple
 
+from jiti.core.models import Model
+
 logger = logging.getLogger("jiti")
 logger.addHandler(logging.NullHandler())
+
+_session_generations: int = 0
+_session_cost: float = 0.0
+_summary_registered: bool = False
 
 
 class Price(NamedTuple):
@@ -28,9 +35,9 @@ class Price(NamedTuple):
 # Approximate pricing (USD per million tokens) — a labeled estimate, NOT billing-accurate.
 # Update these as pricing changes; unknown models simply log token counts without a cost.
 _PRICES: dict[str, Price] = {
-    "claude-opus-4-7": Price(input=15.0, output=75.0, cache_write=18.75, cache_read=1.5),
-    "claude-sonnet-4-6": Price(input=3.0, output=15.0, cache_write=3.75, cache_read=0.3),
-    "claude-haiku-4-5": Price(input=1.0, output=5.0, cache_write=1.25, cache_read=0.1),
+    Model.OPUS_4_7: Price(input=15.0, output=75.0, cache_write=18.75, cache_read=1.5),
+    Model.SONNET_4_6: Price(input=3.0, output=15.0, cache_write=3.75, cache_read=0.3),
+    Model.HAIKU_4_5: Price(input=1.0, output=5.0, cache_write=1.25, cache_read=0.1),
 }
 
 
@@ -49,6 +56,25 @@ def configure() -> None:
         handler.setFormatter(logging.Formatter("jiti %(message)s"))
         logger.addHandler(handler)
     logger.setLevel(level)
+    global _summary_registered
+    if not _summary_registered:
+        atexit.register(_log_session_summary)
+        _summary_registered = True
+
+
+def record_generation(spent: float) -> None:
+    """Accumulate one finished generation's cost into the session total."""
+    global _session_generations, _session_cost
+    _session_generations += 1
+    _session_cost += spent
+
+
+def _log_session_summary() -> None:
+    if _session_generations == 0:
+        return
+    suffix = f" ~${_session_cost:.4f}" if _session_cost else ""
+    label = "generation" if _session_generations == 1 else "generations"
+    logger.info("session: %d %s%s", _session_generations, label, suffix)
 
 
 def cost(model: str, usage: Any) -> float | None:

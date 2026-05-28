@@ -6,9 +6,9 @@ from pathlib import Path
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
-from jiti.discovery import _test_files
-from jiti.engine import Engine
-from jiti.store import JitiStore
+from jiti.agent.engine import Engine
+from jiti.core.discovery import _test_files
+from jiti.core.store import JitiStore
 
 _CLIENT = ScriptedClient([])
 _ENGINE = Engine(client=_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"), test_paths=())

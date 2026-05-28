@@ -17,15 +17,16 @@ from typing import Any
 
 import anthropic
 
-from jiti._log import cost, log_done, log_llm_call, log_start
-from jiti.declaration import ClassContext, Declaration, Gate, introspect
-from jiti.discovery import import_test_modules
-from jiti.errors import ConflictError, GenerationCycleError, GenerationError
-from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
-from jiti.store import Action, JitiStore, scratch_rename
-from jiti.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
+from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
+from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
+from jiti.agent.transcript import Recorder, transcript_path
+from jiti.core.declaration import ClassContext, Declaration, Gate, introspect
+from jiti.core.discovery import import_test_modules
+from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
+from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
+from jiti.core.models import DEFAULT_MODEL, Model, resolve_default
+from jiti.core.store import Action, JitiStore, scratch_rename
 
-DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_TURNS = 40
 DEFAULT_QUALITY_THRESHOLD = 7
@@ -43,7 +44,7 @@ class Engine:
 
     client: Any
     store: JitiStore
-    model: str = DEFAULT_MODEL
+    model: Model = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_turns: int = DEFAULT_MAX_TURNS
     style: str = STYLE_GUIDE
@@ -88,10 +89,16 @@ class Engine:
         depth = len(self._in_progress)
         log_start(key, depth)
         started = perf_counter()
+        recorder = Recorder()
         try:
             gates = self._prepare_gates(declaration)
             context = CallContext(
-                declaration, args, kwargs, import_path=_import_path(declaration), gates=gates
+                declaration,
+                args,
+                kwargs,
+                import_path=_import_path(declaration),
+                gates=gates,
+                recorder=recorder,
             )
             total_cost = self._run_agent(
                 context,
@@ -108,7 +115,9 @@ class Engine:
             impl, tests = context.passing
             self.store.write(declaration, impl, _committed_tests(declaration, tests))
             log_done(key, depth, perf_counter() - started, total_cost)
+            record_generation(total_cost)
         finally:
+            recorder.write(transcript_path(self.store.root, declaration.module, declaration.name))
             self._in_progress.discard(key)
 
     def generate_test(self, test: Declaration, target: Declaration) -> None:
@@ -122,8 +131,9 @@ class Engine:
         depth = len(self._in_progress)
         log_start(key, depth)
         started = perf_counter()
+        recorder = Recorder()
         try:
-            context = CallContext(test, (), {}, import_path=_import_path(test))
+            context = CallContext(test, (), {}, import_path=_import_path(test), recorder=recorder)
             task = _test_task_prompt(test, target)
             # threshold=0 → no refactor pass for tests (red→green→refactor is for the impl).
             cost_ = self._run_agent(
@@ -134,7 +144,9 @@ class Engine:
             body, _ = context.passing
             self.store.write_test(test, body)
             log_done(key, depth, perf_counter() - started, cost_)
+            record_generation(cost_)
         finally:
+            recorder.write(transcript_path(self.store.root, test.module, test.name))
             self._in_progress.discard(key)
 
     def run_test(self, test: Declaration, target: Declaration) -> types.FunctionType:
@@ -180,8 +192,12 @@ class Engine:
             )
             usage = getattr(response, "usage", None)
             key = context.declaration.key
-            log_llm_call(key, turn, depth, perf_counter() - started, usage, self.model)
-            total_cost += cost(self.model, usage) or 0.0
+            elapsed = perf_counter() - started
+            log_llm_call(key, turn, depth, elapsed, usage, self.model)
+            spent = cost(self.model, usage) or 0.0
+            total_cost += spent
+            if context.recorder is not None:
+                context.recorder.turn(turn, elapsed, usage, spent, response.content)
             messages.append({"role": "assistant", "content": response.content})
             tool_uses = [block for block in response.content if _is_tool_use(block)]
             if not tool_uses:
@@ -260,10 +276,17 @@ class _LazyAnthropic:
 
 
 def default_engine() -> Engine:
-    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key)."""
+    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
+
+    Honors the `JITI_MODEL` env var to pick a cheaper model than Opus when set.
+    """
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = Engine(client=_LazyAnthropic(), store=JitiStore(Path.cwd() / ".jiti"))
+        _DEFAULT = Engine(
+            client=_LazyAnthropic(),
+            store=JitiStore(Path.cwd() / ".jiti"),
+            model=resolve_default(),
+        )
     return _DEFAULT
 
 

@@ -5,7 +5,7 @@ from textwrap import dedent
 import pytest
 
 from jiti.cli import main
-from jiti.store import Section, content_hash, module_relpath, render_file
+from jiti.core.store import Section, content_hash, module_relpath, render_file
 
 STUB = dedent('''\
     from jiti import jiti
