@@ -3,8 +3,8 @@
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
+from jiti.agent.engine import Engine
 from jiti.core.store import JitiStore, scratch_rename
-from jiti.engine import Engine
 
 
 def test_scratch_rename_only_touches_unmarked_agent_tests():

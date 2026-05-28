@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from jiti.transcript import Recorder, transcript_path
+from jiti.agent.transcript import Recorder, transcript_path
 
 
 def test_records_turn_tool_call_and_tool_result_in_order(tmp_path):

@@ -7,6 +7,7 @@ it under `.jiti/`. Every call after that runs that committed code.
 
 from pathlib import Path
 
+from jiti.agent.engine import Engine
 from jiti.core.errors import (
     ConflictError,
     GenerationCycleError,
@@ -17,7 +18,6 @@ from jiti.core.errors import (
 from jiti.core.log import configure
 from jiti.core.store import JitiStore
 from jiti.decorator import jiti
-from jiti.engine import Engine
 
 configure()
 

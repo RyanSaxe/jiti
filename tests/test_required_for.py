@@ -7,10 +7,10 @@ import pytest
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
+from jiti.agent.engine import Engine
 from jiti.core.declaration import Gate, introspect
 from jiti.core.errors import JitiError
 from jiti.core.store import JitiStore
-from jiti.engine import Engine
 
 _CLIENT = ScriptedClient([])
 _ENGINE = Engine(client=_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))

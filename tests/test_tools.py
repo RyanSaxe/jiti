@@ -2,10 +2,10 @@
 
 import pytest
 
-from jiti import tools
+from jiti.agent import tools
+from jiti.agent.tools import CallContext
 from jiti.core.declaration import introspect
 from jiti.core.errors import JitiError
-from jiti.tools import CallContext
 
 
 def double(items: list[int]) -> list[int]:

@@ -7,8 +7,8 @@ from pathlib import Path
 from fakes import ScriptedClient, submit, submit_test
 
 from jiti import jiti
+from jiti.agent.engine import Engine
 from jiti.core.store import JitiStore
-from jiti.engine import Engine
 
 _CLIENT = ScriptedClient([])
 _ENGINE = Engine(client=_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))

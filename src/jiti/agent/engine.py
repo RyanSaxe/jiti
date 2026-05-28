@@ -17,14 +17,14 @@ from typing import Any
 
 import anthropic
 
+from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
+from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
+from jiti.agent.transcript import Recorder, transcript_path
 from jiti.core.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.core.discovery import import_test_modules
 from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
 from jiti.core.store import Action, JitiStore, scratch_rename
-from jiti.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
-from jiti.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
-from jiti.transcript import Recorder, transcript_path
 
 DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_MAX_TOKENS = 8192
