@@ -220,10 +220,29 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
     handler = getattr(context, name, None)
     if name.startswith("_") or not callable(handler):
         return f"unknown tool: {name}"
-    logger.debug("  tool %s", name)
+    logger.debug("  tool %s %s", name, _format_tool_input(tool_input))
     try:
-        return str(handler(**tool_input))
+        result = str(handler(**tool_input))
     except JitiError:
         raise  # let jiti's own control-flow errors (e.g. generation cycles) propagate
     except Exception:
-        return cap(traceback.format_exc())
+        result = cap(traceback.format_exc())
+    logger.debug("    -> %s", _format_tool_result(result))
+    return result
+
+
+def _format_tool_input(tool_input: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key, value in tool_input.items():
+        rendered = repr(value)
+        if len(rendered) > 80:
+            rendered = rendered[:77] + "..."
+        parts.append(f"{key}={rendered}")
+    return " ".join(parts)
+
+
+def _format_tool_result(result: str) -> str:
+    snippet = result.replace("\n", " | ")
+    if len(snippet) > 200:
+        snippet = snippet[:197] + "..."
+    return snippet

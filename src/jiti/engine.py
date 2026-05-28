@@ -17,7 +17,7 @@ from typing import Any
 
 import anthropic
 
-from jiti._log import cost, log_done, log_llm_call, log_start
+from jiti._log import cost, log_done, log_llm_call, log_start, record_generation
 from jiti.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.discovery import import_test_modules
 from jiti.errors import ConflictError, GenerationCycleError, GenerationError
@@ -108,6 +108,7 @@ class Engine:
             impl, tests = context.passing
             self.store.write(declaration, impl, _committed_tests(declaration, tests))
             log_done(key, depth, perf_counter() - started, total_cost)
+            record_generation(total_cost)
         finally:
             self._in_progress.discard(key)
 
@@ -134,6 +135,7 @@ class Engine:
             body, _ = context.passing
             self.store.write_test(test, body)
             log_done(key, depth, perf_counter() - started, cost_)
+            record_generation(cost_)
         finally:
             self._in_progress.discard(key)
 

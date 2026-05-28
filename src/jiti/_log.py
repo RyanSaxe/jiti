@@ -7,6 +7,7 @@ an approximate cost. Downstream users get nothing by default.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import sys
@@ -14,6 +15,10 @@ from typing import Any, NamedTuple
 
 logger = logging.getLogger("jiti")
 logger.addHandler(logging.NullHandler())
+
+_session_generations: int = 0
+_session_cost: float = 0.0
+_summary_registered: bool = False
 
 
 class Price(NamedTuple):
@@ -49,6 +54,25 @@ def configure() -> None:
         handler.setFormatter(logging.Formatter("jiti %(message)s"))
         logger.addHandler(handler)
     logger.setLevel(level)
+    global _summary_registered
+    if not _summary_registered:
+        atexit.register(_log_session_summary)
+        _summary_registered = True
+
+
+def record_generation(spent: float) -> None:
+    """Accumulate one finished generation's cost into the session total."""
+    global _session_generations, _session_cost
+    _session_generations += 1
+    _session_cost += spent
+
+
+def _log_session_summary() -> None:
+    if _session_generations == 0:
+        return
+    suffix = f" ~${_session_cost:.4f}" if _session_cost else ""
+    label = "generation" if _session_generations == 1 else "generations"
+    logger.info("session: %d %s%s", _session_generations, label, suffix)
 
 
 def cost(model: str, usage: Any) -> float | None:
