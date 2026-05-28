@@ -24,9 +24,9 @@ from jiti.core.declaration import ClassContext, Declaration, Gate, introspect
 from jiti.core.discovery import import_test_modules
 from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
+from jiti.core.models import DEFAULT_MODEL, Model, resolve_default
 from jiti.core.store import Action, JitiStore, scratch_rename
 
-DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_TURNS = 40
 DEFAULT_QUALITY_THRESHOLD = 7
@@ -44,7 +44,7 @@ class Engine:
 
     client: Any
     store: JitiStore
-    model: str = DEFAULT_MODEL
+    model: Model = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_turns: int = DEFAULT_MAX_TURNS
     style: str = STYLE_GUIDE
@@ -276,10 +276,17 @@ class _LazyAnthropic:
 
 
 def default_engine() -> Engine:
-    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key)."""
+    """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
+
+    Honors the `JITI_MODEL` env var to pick a cheaper model than Opus when set.
+    """
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = Engine(client=_LazyAnthropic(), store=JitiStore(Path.cwd() / ".jiti"))
+        _DEFAULT = Engine(
+            client=_LazyAnthropic(),
+            store=JitiStore(Path.cwd() / ".jiti"),
+            model=resolve_default(),
+        )
     return _DEFAULT
 
 
