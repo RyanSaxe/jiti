@@ -22,6 +22,7 @@ from typing import Any
 from jiti._log import logger
 from jiti.declaration import Declaration, Gate
 from jiti.errors import JitiError
+from jiti.transcript import Recorder
 from jiti.validate import MethodPatch, cap, validate
 
 _RG_INSTALL_HINT = (
@@ -131,6 +132,8 @@ class CallContext:
     passing: tuple[str, str] | None = None
     quality: int = 10
     """The last passing candidate's self-reported quality; the engine loop reads it for refactor."""
+    recorder: Recorder | None = None
+    """Optional transcript recorder; dispatch logs each tool call/result here when set."""
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
@@ -221,6 +224,8 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
     if name.startswith("_") or not callable(handler):
         return f"unknown tool: {name}"
     logger.debug("  tool %s %s", name, _format_tool_input(tool_input))
+    if context.recorder is not None:
+        context.recorder.tool_call(name, tool_input)
     try:
         result = str(handler(**tool_input))
     except JitiError:
@@ -228,6 +233,8 @@ def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str
     except Exception:
         result = cap(traceback.format_exc())
     logger.debug("    -> %s", _format_tool_result(result))
+    if context.recorder is not None:
+        context.recorder.tool_result(name, result)
     return result
 
 
