@@ -2,7 +2,7 @@
 
 import logging
 
-from jiti import _log
+from jiti.core import log as _log
 
 
 class _Usage:

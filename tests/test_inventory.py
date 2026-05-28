@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from jiti.errors import MergeError
+from jiti.core.errors import MergeError
+from jiti.core.store import Section, inventory, parse_sections, render_file
 from jiti.merge import select
-from jiti.store import Section, inventory, parse_sections, render_file
 
 
 def _write_section(root: Path, module: str, qualname: str, *, tests: bool = False) -> None:

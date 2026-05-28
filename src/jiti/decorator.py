@@ -13,9 +13,9 @@ import types
 from collections.abc import Callable
 from typing import Any, cast, overload
 
-from jiti.declaration import Declaration, Gate, analyze_body, gate_for, introspect
+from jiti.core.declaration import Declaration, Gate, analyze_body, gate_for, introspect
+from jiti.core.errors import JitiError
 from jiti.engine import Engine, default_engine
-from jiti.errors import JitiError
 
 
 class _JitiCallable:

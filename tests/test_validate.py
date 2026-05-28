@@ -1,6 +1,6 @@
 """The validator: ruff + ty on the file, then the candidate's tests run in-process."""
 
-from jiti.validate import validate
+from jiti.core.validate import validate
 
 CORRECT = 'def slugify(text: str) -> str:\n    return text.lower().replace(" ", "-")'
 TESTS = 'def test_basic():\n    assert slugify("Hello World") == "hello-world"'

@@ -5,7 +5,7 @@ from textwrap import dedent
 
 import pytest
 
-from jiti.errors import MergeError
+from jiti.core.errors import MergeError
 from jiti.merge import _is_jiti_decorator, merge_into_source
 
 

@@ -4,8 +4,8 @@ import inspect
 
 import pytest
 
-from jiti.declaration import Declaration
-from jiti.store import Action, JitiStore
+from jiti.core.declaration import Declaration
+from jiti.core.store import Action, JitiStore
 
 
 def make_declaration(*, module="app.text", qualname="slugify", docstring="doc") -> Declaration:

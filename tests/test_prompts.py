@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from jiti.declaration import introspect
+from jiti.core.declaration import introspect
+from jiti.core.errors import GenerationError
+from jiti.core.store import JitiStore
 from jiti.engine import Engine
-from jiti.errors import GenerationError
 from jiti.prompts import STYLE_ENV, STYLE_FILE, _bundled, _resolve
-from jiti.store import JitiStore
 
 
 @pytest.fixture(autouse=True)

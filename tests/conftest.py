@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from jiti.discovery import import_file
-from jiti.store import Section, content_hash, module_relpath, parse_file, render_file
+from jiti.core.discovery import import_file
+from jiti.core.store import Section, content_hash, module_relpath, parse_file, render_file
 
 
 @dataclass

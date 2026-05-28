@@ -3,8 +3,8 @@
 import pytest
 
 from jiti import tools
-from jiti.declaration import introspect
-from jiti.errors import JitiError
+from jiti.core.declaration import introspect
+from jiti.core.errors import JitiError
 from jiti.tools import CallContext
 
 

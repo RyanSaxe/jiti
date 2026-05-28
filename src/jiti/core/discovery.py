@@ -19,7 +19,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from jiti._log import logger
+from jiti.core.log import logger
 
 SKIP = {
     ".jiti",

@@ -22,8 +22,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import NamedTuple, cast
 
-from jiti.declaration import Gate
-from jiti.errors import JitiError
+from jiti.core.declaration import Gate
+from jiti.core.errors import JitiError
 
 # Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
 RUFF = (sys.executable, "-m", "ruff")

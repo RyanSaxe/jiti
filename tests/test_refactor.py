@@ -5,8 +5,8 @@ from pathlib import Path
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
+from jiti.core.store import JitiStore
 from jiti.engine import Engine
-from jiti.store import JitiStore
 
 TESTS = "def test_f():\n    assert f(2) == 4"
 ROUGH = "def f(x):\n    return x*2"

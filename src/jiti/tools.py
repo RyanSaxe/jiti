@@ -19,11 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jiti._log import logger
-from jiti.declaration import Declaration, Gate
-from jiti.errors import JitiError
+from jiti.core.declaration import Declaration, Gate
+from jiti.core.errors import JitiError
+from jiti.core.log import logger
+from jiti.core.validate import MethodPatch, cap, validate
 from jiti.transcript import Recorder
-from jiti.validate import MethodPatch, cap, validate
 
 _RG_INSTALL_HINT = (
     "jiti's `grep` tool requires `rg` (ripgrep) on PATH. Install:\n"

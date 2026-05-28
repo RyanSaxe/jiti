@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from jiti import cli
-from jiti.store import Section, content_hash, module_relpath, parse_sections, render_file
+from jiti.core.store import Section, content_hash, module_relpath, parse_sections, render_file
 
 
 def _write_impl(mirror: Path, module: str, qualname: str, *, edited: bool = False) -> None:

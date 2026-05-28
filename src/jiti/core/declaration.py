@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
-from jiti.errors import JitiError, RealBodyError
+from jiti.core.errors import JitiError, RealBodyError
 
 
 class BodyMode(Enum):

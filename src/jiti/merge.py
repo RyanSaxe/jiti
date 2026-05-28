@@ -18,11 +18,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from jiti.declaration import is_stub_node
-from jiti.decorator import _JitiCallable
-from jiti.discovery import import_file, import_test_modules, module_name, walk_py_files
-from jiti.errors import MergeError
-from jiti.store import (
+from jiti.core.declaration import is_stub_node
+from jiti.core.discovery import import_file, import_test_modules, module_name, walk_py_files
+from jiti.core.errors import MergeError
+from jiti.core.store import (
     Action,
     JitiStore,
     Section,
@@ -35,7 +34,8 @@ from jiti.store import (
     scratch_promote,
     test_path_for_module,
 )
-from jiti.validate import RUFF
+from jiti.core.validate import RUFF
+from jiti.decorator import _JitiCallable
 
 
 def merge_into_source(

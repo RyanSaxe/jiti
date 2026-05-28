@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from jiti.declaration import BodyMode, class_context_of, introspect
-from jiti.errors import RealBodyError
+from jiti.core.declaration import BodyMode, class_context_of, introspect
+from jiti.core.errors import RealBodyError
 
 MARKER = object()
 
