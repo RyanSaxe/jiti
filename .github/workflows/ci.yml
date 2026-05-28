@@ -22,6 +22,16 @@ jobs:
           python-version: "3.13"
           enable-cache: true
 
+      - name: Install ripgrep and ast-grep (required by jiti's grep/sg tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          curl -fsSL https://github.com/ast-grep/ast-grep/releases/latest/download/app-x86_64-unknown-linux-gnu.zip -o /tmp/ast-grep.zip
+          unzip -q /tmp/ast-grep.zip -d /tmp/ast-grep
+          sudo install -m 0755 /tmp/ast-grep/sg /usr/local/bin/sg
+          rg --version | head -n1
+          sg --version
+
       - name: Install dependencies
         run: uv sync
 
