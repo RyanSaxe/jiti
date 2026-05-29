@@ -12,8 +12,8 @@ from jiti.core.declaration import introspect
 from jiti.core.errors import GenerationCycleError
 from jiti.core.store import JitiStore
 
-GOOD_IMPL = "def slugify(text):\n    return text.lower().replace(' ', '-')"
-BAD_IMPL = "def slugify(text):\n    return text.upper()"
+GOOD_IMPL = "def slugify(text: str) -> str:\n    return text.lower().replace(' ', '-')"
+BAD_IMPL = "def slugify(text: str) -> str:\n    return text.upper()"
 TESTS = "def test_slug():\n    assert slugify('Hello World') == 'hello-world'"
 
 
@@ -74,10 +74,11 @@ def casc_slugify(text: str) -> str:
 def test_cascade_generates_the_callee():
     slug_impl = (
         f"from {__name__} import casc_normalize\n\n"
-        "def casc_slugify(text):\n    return casc_normalize(text).replace(' ', '-')"
+        "def casc_slugify(text: str) -> str:\n"
+        "    return casc_normalize(text).replace(' ', '-')"
     )
     slug_tests = "def test_s():\n    assert casc_slugify('Hi There') == 'hi-there'"
-    norm_impl = "def casc_normalize(text):\n    return text.lower()"
+    norm_impl = "def casc_normalize(text: str) -> str:\n    return text.lower()"
     norm_tests = "def test_n():\n    assert casc_normalize('Hi') == 'hi'"
     _CASCADE_CLIENT.script = [
         submit("casc_slugify", slug_impl, slug_tests),
@@ -103,7 +104,7 @@ class Counter:
 
 
 def test_method_generation():
-    impl = "def add(self, n):\n    return self.base + n"
+    impl = "def add(self, n: int) -> int:\n    return self.base + n"
     tests = (
         f"from {__name__} import Counter\n\ndef test_add():\n    assert Counter(10).add(5) == 15"
     )

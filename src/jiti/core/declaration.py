@@ -131,7 +131,32 @@ def gate_for(test: types.FunctionType, target: Callable[..., object]) -> Gate:
     return Gate(name=test.__name__, kind="human", spec=source, test=test, target=target)
 
 
-def _signature(func: types.FunctionType) -> inspect.Signature:
+def compare_signatures(spec: Declaration, loaded: Callable[..., object]) -> str | None:
+    """Return a human-readable diff if `loaded`'s signature doesn't match `spec`, else None.
+
+    Catches the case where a user hand-edits a `.jiti/` section's signature: the spec
+    invalidation path covers the reverse (spec edits regenerate via spec_hash), but a hand-
+    edit to a loaded impl can silently break the contract until the wrong types reach
+    runtime. Compares element-wise on annotation equality, not stringified form, so
+    semantically-equivalent forms (`Optional[int]` and `int | None`, `list[str]` and
+    `typing.List[str]`) don't trip a false positive.
+    """
+    loaded_sig = _signature(loaded)
+    if _signatures_equivalent(spec.signature, loaded_sig):
+        return None
+    return f"  spec:   {spec.signature}\n  loaded: {loaded_sig}"
+
+
+def _signatures_equivalent(a: inspect.Signature, b: inspect.Signature) -> bool:
+    if list(a.parameters) != list(b.parameters):
+        return False
+    for pa, pb in zip(a.parameters.values(), b.parameters.values(), strict=True):
+        if pa.kind != pb.kind or pa.default != pb.default or pa.annotation != pb.annotation:
+            return False
+    return a.return_annotation == b.return_annotation
+
+
+def _signature(func: Callable[..., object]) -> inspect.Signature:
     # eval_str resolves stringized annotations (from `from __future__ import annotations` or
     # quoted forward refs) to real types, so the prompt shows `list[str]`, not `'list[str]'`.
     # This resolved signature also feeds the spec hash. Accepted edge: for a stub using such

@@ -18,7 +18,7 @@ def test_scratch_rename_only_touches_unmarked_agent_tests():
 
 
 def test_committed_agent_tests_are_scratch(tmp_path):
-    impl = "def f(x):\n    return x * 2"
+    impl = "def f(x: int) -> int:\n    return x * 2"
     agent_tests = "def test_doubles():\n    assert f(2) == 4"
     client = ScriptedClient([submit("f", impl, agent_tests, quality=9)])
     engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))

@@ -144,7 +144,22 @@ def test_loaded_function_has_live_annotation_objects_not_strings(store):
     `from __future__ import annotations`, which would silently stringify every loaded
     function's annotations and break downstream introspection (pydantic, runtime checks).
     Pin the `dont_inherit=True` fix that keeps annotations as live class objects."""
-    declaration = make_declaration(qualname="identity")
+    sig = inspect.Signature(
+        parameters=[
+            inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=int)
+        ],
+        return_annotation=int,
+    )
+    declaration = Declaration(
+        module="app.text",
+        qualname="identity",
+        name="identity",
+        signature=sig,
+        docstring="doc",
+        hint=None,
+        available_symbols=(),
+        class_context=None,
+    )
     store.write(
         declaration,
         "def identity(x: int) -> int:\n    return x",
