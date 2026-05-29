@@ -3,23 +3,9 @@
 import inspect
 
 import pytest
+from conftest import make_declaration
 
-from jiti.core.declaration import Declaration
 from jiti.core.store import Action, JitiStore
-
-
-def make_declaration(*, module="app.text", qualname="slugify", docstring="doc") -> Declaration:
-    return Declaration(
-        module=module,
-        qualname=qualname,
-        name=qualname.split(".")[-1],
-        signature=inspect.Signature(),
-        docstring=docstring,
-        hint=None,
-        available_symbols=(),
-        class_context=None,
-    )
-
 
 IMPL = "def slugify():\n    return 'a'"
 TESTS = "def test_slugify():\n    assert slugify() == 'a'"
@@ -144,21 +130,14 @@ def test_loaded_function_has_live_annotation_objects_not_strings(store):
     `from __future__ import annotations`, which would silently stringify every loaded
     function's annotations and break downstream introspection (pydantic, runtime checks).
     Pin the `dont_inherit=True` fix that keeps annotations as live class objects."""
-    sig = inspect.Signature(
-        parameters=[
-            inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=int)
-        ],
-        return_annotation=int,
-    )
-    declaration = Declaration(
-        module="app.text",
+    declaration = make_declaration(
         qualname="identity",
-        name="identity",
-        signature=sig,
-        docstring="doc",
-        hint=None,
-        available_symbols=(),
-        class_context=None,
+        signature=inspect.Signature(
+            parameters=[
+                inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=int)
+            ],
+            return_annotation=int,
+        ),
     )
     store.write(
         declaration,

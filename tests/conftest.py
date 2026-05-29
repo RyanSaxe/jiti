@@ -1,5 +1,6 @@
 """Shared fixtures for CLI/merge tests: a throwaway importable project with a `.jiti/` mirror."""
 
+import inspect
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,8 +8,29 @@ from uuid import uuid4
 
 import pytest
 
+from jiti.core.declaration import Declaration
 from jiti.core.discovery import import_file
 from jiti.core.store import Section, content_hash, module_relpath, parse_file, render_file
+
+
+def make_declaration(
+    *,
+    module: str = "app.text",
+    qualname: str = "slugify",
+    docstring: str = "doc",
+    signature: inspect.Signature | None = None,
+) -> Declaration:
+    """Build a `Declaration` for tests that don't need to introspect a real stub."""
+    return Declaration(
+        module=module,
+        qualname=qualname,
+        name=qualname.split(".")[-1],
+        signature=signature if signature is not None else inspect.Signature(),
+        docstring=docstring,
+        hint=None,
+        available_symbols=(),
+        class_context=None,
+    )
 
 
 @dataclass

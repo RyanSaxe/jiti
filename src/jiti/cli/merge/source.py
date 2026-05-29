@@ -4,12 +4,7 @@ The transform is text-preserving: it replaces the `@jiti` stub's exact line span
 generated implementation (helpers + public function), keeps the user's signature line, and
 brings along the impls' imports — minus self-imports of the module being merged into.
 ruff is deferred to `_ruff_batch` so a multi-target merge formats every touched file in one
-pass.
-
-Note: merge intentionally strips the `@jiti` decorator and, with it, the pydantic runtime
-contract that wrapped every call (see `core.validate.CONTRACT`). Post-merge code is plain
-Python with no jiti dependencies — type safety becomes the user's responsibility (their
-type-checker, their tests). Do not restore the wrap here.
+pass. Stripping `@jiti` also drops the runtime contract; post-merge code is plain Python.
 """
 
 from __future__ import annotations
