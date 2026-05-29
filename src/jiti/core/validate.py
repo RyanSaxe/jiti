@@ -22,8 +22,21 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import NamedTuple, cast
 
+from pydantic import ConfigDict, validate_call
+
 from jiti.core.declaration import Gate
 from jiti.core.errors import JitiError
+
+# The runtime contract every `@jiti` function (and every candidate exec'd in-process during
+# validation) is wrapped with: strict mode forbids pydantic's default coercion, so a buggy
+# `parse(123)` against `(text: str)` raises instead of being silently fixed; arbitrary types
+# accept plain dataclasses and user classes via isinstance; `validate_return` catches an
+# impl that lies about its return type. After `jiti merge` strips the wrapper, this contract
+# goes away — by design.
+CONTRACT = validate_call(
+    config=ConfigDict(strict=True, arbitrary_types_allowed=True),
+    validate_return=True,
+)
 
 # Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
 RUFF = (sys.executable, "-m", "ruff")
@@ -125,8 +138,14 @@ def _run_tests(
 ) -> tuple[Check, ...]:
     namespace: dict[str, object] = {}
     try:
-        exec(compile(impl_source, "<jiti-candidate>", "exec"), namespace)
-        exec(compile(test_source, "<jiti-candidate-tests>", "exec"), namespace)
+        exec(compile(impl_source, "<jiti-candidate>", "exec", dont_inherit=True), namespace)
+        # Wrap the candidate (and only the candidate) with the runtime contract so the tests
+        # exec'd next exercise the same validation users get at call time — surfaces type-lie
+        # impls as pydantic errors in the agent's feedback rather than wrong-value asserts.
+        candidate = namespace.get(name) if name else None
+        if callable(candidate):
+            namespace[name] = CONTRACT(candidate)
+        exec(compile(test_source, "<jiti-candidate-tests>", "exec", dont_inherit=True), namespace)
     except Exception:
         return (Check("tests", ok=False, output=cap(traceback.format_exc())),)
     with _candidate_method(namespace, patch):
