@@ -64,10 +64,6 @@ class Section:
     spec_hash: str
     gen_hash: str
     body: str
-    user_decorators: tuple[str, ...] = ()
-    """Decorators stacked above `@jiti` on the user's stub — surfaced in the section header
-    so a reader can see at a glance what wrappers the runtime call goes through. Cosmetic;
-    not part of `spec_hash` or `gen_hash`."""
 
     @property
     def edited(self) -> bool:
@@ -131,9 +127,8 @@ class JitiStore:
     def write(self, declaration: Declaration, impl_body: str, test_body: str) -> Section:
         """Persist (or replace) the impl and test sections, hoisting imports to the top."""
         spec = declaration.spec_hash
-        decorators = declaration.user_decorators
         impl_imports, impl_code = _split_imports(impl_body)
-        impl = Section(declaration.key, spec, content_hash(impl_code), impl_code, decorators)
+        impl = Section(declaration.key, spec, content_hash(impl_code), impl_code)
         self._upsert(self.impl_path(declaration), impl, impl_imports)
         test_imports, test_code = _split_imports(test_body)
         test = Section(declaration.key, spec, content_hash(test_code), test_code)
@@ -230,15 +225,16 @@ def remove_empty_dirs(root: Path) -> None:
 
 
 def render_section(section: Section) -> str:
-    header = [
-        _begin_marker(section.key),
-        f"# spec-hash: {section.spec_hash}",
-        f"# gen-hash: {section.gen_hash}",
-    ]
-    if section.user_decorators:
-        rendered = ", ".join(f"@{name}" for name in section.user_decorators)
-        header.append(f"# user-decorators: {rendered}")
-    return "\n".join([*header, "", section.body.strip("\n"), _end_marker(section.key)])
+    return "\n".join(
+        [
+            _begin_marker(section.key),
+            f"# spec-hash: {section.spec_hash}",
+            f"# gen-hash: {section.gen_hash}",
+            "",
+            section.body.strip("\n"),
+            _end_marker(section.key),
+        ]
+    )
 
 
 def render_file(imports: str, sections: dict[str, Section]) -> str:
@@ -282,22 +278,24 @@ def _parse_one(lines: list[str], index: int, key: str) -> tuple[int, Section]:
     while index < len(lines) and lines[index] != end_marker:
         index += 1
     body = "\n".join(lines[body_start:index]).strip("\n")
-    decorators_raw = fields.get("user-decorators", "")
-    user_decorators = tuple(
-        token.strip().lstrip("@") for token in decorators_raw.split(",") if token.strip()
-    )
     section = Section(
         key=key,
         spec_hash=fields.get("spec-hash", ""),
         gen_hash=fields.get("gen-hash", ""),
         body=body,
-        user_decorators=user_decorators,
     )
     return index + 1, section
 
 
 def _split_imports(source: str) -> tuple[str, str]:
-    """Separate top-level import statements from the rest of a translation unit."""
+    """Separate top-level import statements from the rest of a translation unit.
+
+    `from __future__` imports are dropped entirely. The user's source can use them
+    (stringifying its own stub annotations is fine — we splice the stub's def line as
+    text anyway), but a `__future__` directive in the `.jiti` file would stringify the
+    loaded function's annotations, which downstream introspection (pydantic's runtime
+    contract, signature inspection) needs as live class objects.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -308,8 +306,10 @@ def _split_imports(source: str) -> tuple[str, str]:
     for node in tree.body:
         if isinstance(node, ast.Import | ast.ImportFrom):
             end = node.end_lineno or node.lineno
-            imports.append("\n".join(lines[node.lineno - 1 : end]))
             import_lines.update(range(node.lineno, end + 1))
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                continue
+            imports.append("\n".join(lines[node.lineno - 1 : end]))
     body = "\n".join(line for number, line in enumerate(lines, 1) if number not in import_lines)
     body = re.sub(r"\n{3,}", "\n\n", body).strip("\n")  # close the gap where imports were
     return "\n".join(imports), body

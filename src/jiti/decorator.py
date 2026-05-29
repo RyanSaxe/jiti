@@ -184,9 +184,14 @@ class _Jiti:
 def _unwrap_to_jiti_callable(target: object) -> _JitiCallable | None:
     """Find the `_JitiCallable` underneath descriptor and `functools.wraps`-style wrappers.
 
-    Handles the common stacks: `@staticmethod @jiti` (target is a staticmethod), `@classmethod
-    @jiti`, `@property @jiti`, and `@lru_cache @jiti` (`__wrapped__` chain). Returns `None`
-    when no `_JitiCallable` is found — caller raises a clear error.
+    Walks `__func__` first, then `__wrapped__`, then `fget`. Order matters: bound methods
+    (what `getattr(Class, classmethod_name)` returns) proxy attribute access to `__func__`,
+    so `bound_method.__wrapped__` tunnels through to `JitiCallable.__wrapped__` — the stub
+    function — and overshoots. Checking `__func__` first lands directly on the JitiCallable.
+
+    Handles the common stacks: `@staticmethod @jiti`, `@classmethod @jiti`, `@property @jiti`,
+    `@lru_cache @jiti`, and any `functools.wraps`-style decorator. Returns `None` when no
+    `_JitiCallable` is found.
     """
     seen: set[int] = set()
     while target is not None and id(target) not in seen:
@@ -194,8 +199,8 @@ def _unwrap_to_jiti_callable(target: object) -> _JitiCallable | None:
             return target
         seen.add(id(target))
         target = (
-            getattr(target, "__wrapped__", None)
-            or getattr(target, "__func__", None)
+            getattr(target, "__func__", None)
+            or getattr(target, "__wrapped__", None)
             or getattr(target, "fget", None)
         )
     return None

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from jiti.core.errors import MergeError
 from jiti.core.store import atomic_write, drop_section, parse_file
-from jiti.decorator import _JitiCallable
+from jiti.decorator import _JitiCallable, _unwrap_to_jiti_callable
 
 
 def merge_into_source(
@@ -23,17 +23,24 @@ def merge_into_source(
 ) -> str:
     """Return `source` with the `@jiti` stub `qualname` replaced by its generated implementation.
 
-    `section_body` is the generated unit (helpers + public function, no markers); `file_imports`
-    is the companion's hoisted import block; `own_module` is the module being merged into, whose
-    self-imports are dropped (the symbols already live in the file). For a method qualname
-    (`Class.method`), the splice descends into the class body and re-indents the section. Non-
-    `@jiti` decorators stacked above `@jiti` (e.g. `@staticmethod`, `@functools.cache`) are
-    preserved on the merged def — only the `@jiti` decorator line itself is dropped.
+    `section_body` is the generated unit (private helpers + public function, no markers);
+    `file_imports` is the companion's hoisted import block; `own_module` is the module being
+    merged into, whose self-imports are dropped (the symbols already live in the file). The
+    public function is spliced at the `@jiti` site (and re-indented if it's a class method);
+    any module-level helpers in the section body (constants, private functions, etc.) are
+    injected at module level near the imports — keeping them out of the class body where
+    they'd cause syntax errors when stacked under decorators like `@staticmethod`.
+
+    Non-`@jiti` decorators stacked above `@jiti` (e.g. `@staticmethod`, `@functools.cache`)
+    are preserved on the merged def — only the `@jiti` decorator line itself is dropped.
     """
     node = _find_jiti_def_at(ast.parse(source), qualname)
     # _find_jiti_def_at already guarantees node has a @jiti decorator; this just locates it.
     jiti_decorator = next(d for d in node.decorator_list if _is_jiti_decorator(d))
-    spliced = _splice(source.splitlines(), node, section_body, jiti_decorator)
+    helpers, function = _split_section(section_body, node.name)
+    spliced = _splice(source.splitlines(), node, function, jiti_decorator)
+    if helpers.strip():
+        spliced = _inject_module_block(spliced, helpers)
     needed = _strip_self_imports(file_imports, own_module)
     if needed:
         spliced = _inject_imports(spliced, needed)
@@ -58,13 +65,19 @@ def apply_section(ref, source_path: Path) -> Path:
 
 
 def resolve_wrapper(module: str, qualname: str) -> _JitiCallable | None:
-    """Walk `module.qualname` through `sys.modules`; return the wrapper if it's still a stub."""
+    """Walk `module.qualname` and unwrap to the underlying `_JitiCallable`, if any.
+
+    Plain `@jiti` defs surface the JitiCallable directly via attribute access; stacked
+    descriptors (`@staticmethod @jiti`, `@property @jiti`, etc.) surface their wrapper —
+    `_unwrap_to_jiti_callable` peels through `__wrapped__` / `__func__` / `fget` to find
+    the JitiCallable underneath. Same unwrap used by `jiti.required_for`.
+    """
     target: object | None = sys.modules.get(module)
     for part in qualname.split("."):
         target = getattr(target, part, None)
         if target is None:
             return None
-    return target if isinstance(target, _JitiCallable) else None
+    return _unwrap_to_jiti_callable(target)
 
 
 def _find_jiti_def_at(tree: ast.Module, qualname: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
@@ -108,36 +121,53 @@ def _is_jiti_decorator(node: ast.expr) -> bool:
 def _splice(
     lines: list[str],
     node: ast.FunctionDef | ast.AsyncFunctionDef,
-    body: str,
+    function: str,
     jiti_decorator: ast.expr,
 ) -> str:
-    """Replace the `@jiti` decorator + def body with `body`, preserving the user's signature.
+    """Replace the `@jiti` decorator + def body with `function`, preserving the user's signature.
 
     The user's signature is the contract — keeping it sidesteps Python forward-reference issues
     (a method body referring to its enclosing class by name) and any cosmetic drift the agent
     introduced (e.g. unquoted vs quoted annotations). Decorators above `@jiti` (e.g.
-    `@staticmethod`) live at lower line numbers in source and are left untouched.
+    `@staticmethod`) live at lower line numbers in source and are left untouched. `function`
+    is the def-with-body only — helpers were already split out in `merge_into_source`.
     """
     start = jiti_decorator.lineno
     end = node.end_lineno or node.lineno
-    rebuilt = _replace_signature_in_body(lines, node, body)
-    body_lines = _reindent(rebuilt, node.col_offset).splitlines()
-    return "\n".join(lines[: start - 1] + body_lines + lines[end:])
+    rebuilt = _replace_signature(lines, node, function)
+    function_lines = _reindent(rebuilt, node.col_offset).splitlines()
+    return "\n".join(lines[: start - 1] + function_lines + lines[end:])
 
 
-def _replace_signature_in_body(
-    source_lines: list[str], user_node: ast.FunctionDef | ast.AsyncFunctionDef, body: str
-) -> str:
-    """Rewrite `body` so its public def uses `user_node`'s signature; leave helpers as-is."""
-    section_lines = body.splitlines()
-    public = _public_function(body, user_node.name)
+def _split_section(section_body: str, name: str) -> tuple[str, str]:
+    """Split a section body into (module-level helpers, public function with its body).
+
+    Helpers — any top-level constants, imports, or private defs in the section body — go to
+    module level on merge. The public function (the one named `name`, with its body intact)
+    stays at the splice site. If no public function with `name` is found, treat the whole
+    body as the function and return no helpers.
+    """
+    public = _public_function(section_body, name)
     if public is None:
-        return body
+        return "", section_body
+    section_lines = section_body.splitlines()
+    helpers = "\n".join(section_lines[: public.lineno - 1]).strip("\n")
+    function = "\n".join(section_lines[public.lineno - 1 :])
+    return helpers, function
+
+
+def _replace_signature(
+    source_lines: list[str], user_node: ast.FunctionDef | ast.AsyncFunctionDef, function: str
+) -> str:
+    """Replace the def line(s) in `function` with `user_node`'s signature from source."""
+    public = _public_function(function, user_node.name)
+    if public is None:
+        return function
+    function_lines = function.splitlines()
     user_signature = _signature_lines(source_lines, user_node)
-    public_sig_first = public.lineno
     public_sig_last = (public.body[0].lineno - 1) if public.body else public.lineno
     rebuilt = (
-        section_lines[: public_sig_first - 1] + user_signature + section_lines[public_sig_last:]
+        function_lines[: public.lineno - 1] + user_signature + function_lines[public_sig_last:]
     )
     return "\n".join(rebuilt)
 
@@ -148,6 +178,23 @@ def _public_function(body: str, name: str) -> ast.FunctionDef | ast.AsyncFunctio
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
             return node
     return None
+
+
+def _inject_module_block(source: str, block: str) -> str:
+    """Inject `block` (module-level helpers) into `source` right after the existing imports.
+
+    Uses the same anchor as `_inject_imports` so helpers and imports stay grouped at the top
+    of the file. Ruff's batch pass at the end of merge will sort + dedupe everything.
+    """
+    if not block.strip():
+        return source
+    lines = source.splitlines()
+    anchor = _import_anchor(ast.parse(source))
+    block_lines = block.splitlines()
+    # Add a blank-line separator below the block so it doesn't run into following code.
+    if anchor < len(lines) and lines[anchor].strip():
+        block_lines = [*block_lines, ""]
+    return "\n".join(lines[:anchor] + block_lines + lines[anchor:])
 
 
 def _signature_lines(
@@ -181,10 +228,18 @@ def _strip_self_imports(imports: str, own_module: str) -> str:
 
 
 def _is_self_import(node: ast.stmt, own_module: str) -> bool:
+    """An import is "self" only if it brings names already in scope post-merge.
+
+    `from own_module import parse` is redundant once we're inside `own_module` — drop it.
+    `from own_module import parse as _parse` introduces a NEW name (`_parse`); the merged
+    code uses that alias, so the import must stay.
+    """
     if isinstance(node, ast.ImportFrom):
-        return node.level == 0 and node.module == own_module
+        if node.level != 0 or node.module != own_module:
+            return False
+        return all(alias.asname is None for alias in node.names)
     if isinstance(node, ast.Import):
-        return any(alias.name == own_module for alias in node.names)
+        return any(alias.name == own_module and alias.asname is None for alias in node.names)
     return False
 
 

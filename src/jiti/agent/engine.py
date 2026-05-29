@@ -20,7 +20,7 @@ import anthropic
 from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
-from jiti.core.declaration import ClassContext, Declaration, Gate, introspect
+from jiti.core.declaration import CallStyle, ClassContext, Declaration, Gate, introspect
 from jiti.core.discovery import import_test_modules
 from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
@@ -380,20 +380,33 @@ def _class_section(context: ClassContext) -> str:
     attributes = "\n".join(f"  - self.{n}: {t or 'unknown'}" for n, t in context.attributes)
     methods = "\n".join(f"  - self.{n}{sig}" for n, sig in context.methods)
     return (
-        f"This is a method of class {context.name}; the first parameter is the instance.\n"
+        f"This is defined on class {context.name}.\n"
         f"Instance attributes:\n{attributes or '  (none)'}\n"
         f"Sibling methods:\n{methods or '  (none)'}"
     )
 
 
 def _test_instruction(declaration: Declaration) -> list[str]:
-    if declaration.class_context is not None:
-        cls = declaration.class_context.name
-        return [
-            f"Tests must `from {declaration.module} import {cls}`, build an instance, and call",
-            f"the method on it: `obj = {cls}(...); obj.{declaration.name}(...)`.",
-        ]
-    return [
-        f"Tests are named test_* functions that call `{declaration.name}` by its BARE name",
-        "(it shares their namespace during validation; do not import it).",
-    ]
+    name = declaration.name
+    cls = declaration.class_context.name if declaration.class_context else None
+    match declaration.call_style:
+        case CallStyle.BARE:
+            return [
+                f"Tests are named test_* functions that call `{name}` by its BARE name",
+                "(it shares their namespace during validation; do not import it).",
+            ]
+        case CallStyle.STATIC:
+            return [
+                f"Tests must `from {declaration.module} import {cls}` and call",
+                f"`{cls}.{name}(...)` directly (no instance needed).",
+            ]
+        case CallStyle.METHOD:
+            return [
+                f"Tests must `from {declaration.module} import {cls}`, build an instance, and call",
+                f"the method on it: `obj = {cls}(...); obj.{name}(...)`.",
+            ]
+        case CallStyle.ATTRIBUTE:
+            return [
+                f"Tests must `from {declaration.module} import {cls}`, build an instance, and",
+                f"access the property with NO parens: `{cls}(...).{name}` returns the value.",
+            ]

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from jiti.core.declaration import Declaration
+from jiti.core.declaration import CallStyle, Declaration
 from jiti.core.discovery import import_file
 from jiti.core.store import Section, content_hash, module_relpath, parse_file, render_file
 
@@ -20,7 +20,7 @@ def make_declaration(
     docstring: str = "doc",
     signature: inspect.Signature | None = None,
     def_line: str | None = None,
-    user_decorators: tuple[str, ...] = (),
+    call_style: CallStyle = CallStyle.BARE,
 ) -> Declaration:
     """Build a `Declaration` for tests that don't need to introspect a real stub."""
     name = qualname.split(".")[-1]
@@ -34,7 +34,7 @@ def make_declaration(
         available_symbols=(),
         class_context=None,
         def_line=def_line if def_line is not None else f"def {name}():",
-        user_decorators=user_decorators,
+        call_style=call_style,
     )
 
 

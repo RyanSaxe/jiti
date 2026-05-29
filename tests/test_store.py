@@ -93,7 +93,11 @@ def test_imports_are_hoisted_deduped_and_bodies_left_import_free(store):
     assert store.read_section(a).body == "def a():\n    return re.compile('x')"  # body import-free
 
 
-def test_future_import_is_hoisted_and_the_file_stays_valid(store):
+def test_future_import_is_dropped_from_the_companion(store):
+    """`from __future__ import annotations` in the agent's helpers stringifies every
+    annotation, which breaks pydantic's runtime contract (it can't resolve names like
+    `Version` from the caller's frame). Drop the directive entirely on write — the user's
+    own source can use it freely; the `.jiti` file just needs live annotations."""
     declaration = make_declaration()
     store.write(
         declaration,
@@ -102,8 +106,8 @@ def test_future_import_is_hoisted_and_the_file_stays_valid(store):
     )
 
     text = store.impl_path(declaration).read_text()
-    compile(text, "<companion>", "exec")  # the original crash: __future__ must be file-first
-    assert "from __future__ import annotations" in text
+    compile(text, "<companion>", "exec")
+    assert "from __future__" not in text
 
 
 def test_write_publishes_atomically_leaving_no_temp_files(store):
@@ -123,26 +127,6 @@ def test_multiple_declarations_share_one_companion_file(store):
     assert store.impl_path(slugify) == store.impl_path(parse)
     assert store.read_section(slugify).body == IMPL
     assert store.read_section(parse).body == "def parse():\n    return 1"
-
-
-def test_section_header_surfaces_user_decorators(store):
-    declaration = make_declaration(user_decorators=("staticmethod",))
-    store.write(declaration, IMPL, TESTS)
-
-    text = store.impl_path(declaration).read_text()
-    assert "# user-decorators: @staticmethod" in text
-
-    # Round-trip through parse — the field survives.
-    section = store.read_section(declaration)
-    assert section is not None
-    assert section.user_decorators == ("staticmethod",)
-
-
-def test_section_header_omits_user_decorators_when_none(store):
-    declaration = make_declaration()
-    store.write(declaration, IMPL, TESTS)
-
-    assert "user-decorators" not in store.impl_path(declaration).read_text()
 
 
 def test_loaded_function_has_live_annotation_objects_not_strings(store):

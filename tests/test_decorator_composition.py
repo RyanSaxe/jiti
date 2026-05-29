@@ -95,22 +95,19 @@ def test_property_composes_with_jiti():
     assert _PROP_CLIENT.calls == 1
 
 
-# ---------- introspect detects outer descriptor decorators ----------
+# ---------- introspect derives the production call style ----------
 
 
-def test_introspect_detects_user_decorators_from_class_attribute():
-    """The Declaration's `user_decorators` reflects descriptor wrappers stacked above
-    `@jiti` — even though `__set_name__` doesn't fire on the inner `_JitiCallable`."""
-    static_decl = _StaticHost.__dict__["doubled"].__func__.declaration()
-    assert static_decl.user_decorators == ("staticmethod",)
+def test_introspect_derives_call_style_for_each_descriptor_kind():
+    """`call_style` is derived from the signature + the one `fget` check; the prompt and
+    splice both read it without enumerating descriptor types."""
+    from jiti.core.declaration import CallStyle
 
-    class_decl = _ClassHost.__dict__["scaled"].__func__.declaration()
-    assert class_decl.user_decorators == ("classmethod",)
-
+    assert _StaticHost.__dict__["doubled"].__func__.declaration().call_style is CallStyle.STATIC
+    assert _ClassHost.__dict__["scaled"].__func__.declaration().call_style is CallStyle.METHOD
     prop_attr = _PropHost.__dict__["doubled"]
     assert prop_attr.fget is not None
-    prop_decl = prop_attr.fget.declaration()
-    assert prop_decl.user_decorators == ("property",)
+    assert prop_attr.fget.declaration().call_style is CallStyle.ATTRIBUTE
 
 
 # ---------- @lru_cache @jiti ----------

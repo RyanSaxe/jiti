@@ -34,6 +34,29 @@ class BodyMode(Enum):
     """Body adds comments/pseudocode — generate, using the comments as guidance."""
 
 
+class CallStyle(Enum):
+    """How production code invokes this target — what the agent's tests must mirror.
+
+    Derived from the signature's first parameter plus a single descriptor check
+    (`hasattr(attr, 'fget')`) for property-likes. The four cases cover every callable
+    Python exposes at a class attribute or module top-level; custom descriptors that
+    aren't property-like fall under `METHOD`, which is the safe default.
+    """
+
+    BARE = "bare"
+    """Free function: tests call `name(args)`."""
+
+    STATIC = "static"
+    """Class member with no `self`/`cls`: tests call `Class.name(args)`."""
+
+    METHOD = "method"
+    """Class member with `self`/`cls` and at least one other param (or no `fget`):
+    tests build an instance and call `obj.name(args)`."""
+
+    ATTRIBUTE = "attribute"
+    """Property-like: tests access `Class(...).name` with no parens."""
+
+
 @dataclass(frozen=True)
 class ClassContext:
     """The enclosing class's shape, so a method's body can use `self`/`cls` correctly."""
@@ -77,10 +100,9 @@ class Declaration:
     def_line: str
     """The stub's `def name(...) -> ret:` text, spliced verbatim into the `.jiti` file."""
 
-    user_decorators: tuple[str, ...] = ()
-    """Decorators stacked above `@jiti` on the user's stub (e.g. `staticmethod`, `lru_cache`).
-    Informational only — surfaced in the `.jiti` section header so a reader of a generated
-    file knows what wrappers the runtime call goes through. Does NOT feed `spec_hash`."""
+    call_style: CallStyle = CallStyle.BARE
+    """How production code invokes this target. The single signal every downstream layer
+    (prompt, validate, merge) reads to decide the calling pattern."""
 
     gates: tuple[Gate, ...] = ()
 
@@ -104,47 +126,54 @@ def introspect(
 ) -> Declaration:
     """Build a `Declaration` from a stub function and (for methods) its owner class.
 
+    `owner` is passed in for plain `@jiti` methods (where `__set_name__` fires on the
+    JitiCallable). For methods masked by an outer descriptor (`@staticmethod @jiti`,
+    `@property @jiti`, etc.) we recover the owner by walking `__qualname__` through
+    `sys.modules` — so every method gets a populated `class_context`, regardless of how
+    it's wrapped. `call_style` is derived from the resolved signature plus one descriptor
+    check; everything else (prompt, splice, eject) reads it as the single source of truth.
+
     Raises `RealBodyError` if the stub already has a real implementation.
     """
-    class_context = class_context_of(owner, exclude=func.__name__) if owner else None
+    cls = owner or _resolve_owner(func)
+    class_context = class_context_of(cls, exclude=func.__name__) if cls is not None else None
+    signature = _signature(func)
     source = textwrap.dedent(inspect.getsource(func))
     node = _function_node(source, func.__name__)
     return Declaration(
         module=func.__module__,
         qualname=func.__qualname__,
         name=func.__name__,
-        signature=_signature(func),
+        signature=signature,
         docstring=inspect.getdoc(func),
         hint=_analyze_node(source, node, func.__qualname__),
         available_symbols=_module_symbols(func),
         class_context=class_context,
         def_line=_def_line_from_node(source, node),
-        user_decorators=_detect_user_decorators(func, owner),
+        call_style=_call_style(cls, func.__name__, signature),
         gates=gates,
     )
 
 
-def _detect_user_decorators(func: types.FunctionType, owner: type | None) -> tuple[str, ...]:
-    """Detect descriptor decorators (`@staticmethod`, `@classmethod`, `@property`) stacked
-    above `@jiti` on a method stub.
+def _call_style(cls: type | None, name: str, signature: inspect.Signature) -> CallStyle:
+    """Derive the production calling pattern from the class context + signature shape.
 
-    Only methods are inspected — descriptor-style wrappers are what live on the class. A
-    `@lru_cache @jiti` on a free function (or above a method) doesn't show up here: the
-    cache wraps the `_JitiCallable` itself, and we lose visibility once it's gone behind
-    the wrapper. The header is best-effort context, not a complete dependency graph.
+    Free function (no class): `BARE`. On a class:
+    - First param is `self`/`cls` and the attribute exposes `fget` → `ATTRIBUTE` (property-
+      like; works for `property`, `functools.cached_property`, Django/SQLAlchemy descriptors,
+      anything else following the `fget` convention).
+    - First param is `self`/`cls` → `METHOD` (bind an instance / call on the class).
+    - No `self`/`cls` first param → `STATIC` (call on the class directly).
     """
-    cls = owner or _resolve_owner(func)
     if cls is None:
-        return ()
-    attr = cls.__dict__.get(func.__name__)
-    decorators: list[str] = []
-    if isinstance(attr, staticmethod):
-        decorators.append("staticmethod")
-    elif isinstance(attr, classmethod):
-        decorators.append("classmethod")
-    elif isinstance(attr, property):
-        decorators.append("property")
-    return tuple(decorators)
+        return CallStyle.BARE
+    parameters = list(signature.parameters.values())
+    receives_instance_or_class = bool(parameters) and parameters[0].name in {"self", "cls"}
+    if receives_instance_or_class and hasattr(cls.__dict__.get(name), "fget"):
+        return CallStyle.ATTRIBUTE
+    if receives_instance_or_class:
+        return CallStyle.METHOD
+    return CallStyle.STATIC
 
 
 def _resolve_owner(func: types.FunctionType) -> type | None:
