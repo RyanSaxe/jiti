@@ -93,7 +93,9 @@ def test_jiti_call_decorator_with_engine_is_replaced():
     assert "return x" in merged
 
 
-def test_extra_non_jiti_decorator_is_rejected():
+def test_non_jiti_decorator_above_jiti_is_preserved():
+    """Decorators stacked above `@jiti` (e.g. `@functools.cache`, `@staticmethod`) survive
+    the merge — only the `@jiti` line itself is dropped."""
     source = dedent("""\
         import functools
 
@@ -105,8 +107,25 @@ def test_extra_non_jiti_decorator_is_rejected():
         def f(x: int) -> int:
             ...
     """)
-    with pytest.raises(MergeError, match="other than @jiti"):
-        merge_into_source(source, "f", "app.m", "def f(x): return x\n", "")
+    merged = merge_into_source(source, "f", "app.m", "def f(x: int) -> int:\n    return x\n", "")
+
+    assert "@jiti" not in merged
+    assert "@functools.cache" in merged
+    assert merged.index("@functools.cache") < merged.index("def f")
+    assert "return x" in merged
+
+
+def test_no_jiti_decorator_at_all_is_rejected():
+    source = dedent("""\
+        import functools
+
+
+        @functools.cache
+        def f(x: int) -> int:
+            ...
+    """)
+    with pytest.raises(MergeError, match="no @jiti-decorated"):
+        merge_into_source(source, "f", "app.m", "def f(x: int) -> int:\n    return x\n", "")
 
 
 def test_multiline_signature_is_spliced_whole():

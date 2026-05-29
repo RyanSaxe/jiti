@@ -26,14 +26,14 @@ def merge_into_source(
     `section_body` is the generated unit (helpers + public function, no markers); `file_imports`
     is the companion's hoisted import block; `own_module` is the module being merged into, whose
     self-imports are dropped (the symbols already live in the file). For a method qualname
-    (`Class.method`), the splice descends into the class body and re-indents the section.
+    (`Class.method`), the splice descends into the class body and re-indents the section. Non-
+    `@jiti` decorators stacked above `@jiti` (e.g. `@staticmethod`, `@functools.cache`) are
+    preserved on the merged def — only the `@jiti` decorator line itself is dropped.
     """
     node = _find_jiti_def_at(ast.parse(source), qualname)
-    # TODO: support @classmethod/@staticmethod stacking — needs the extra decorator captured in
-    # Declaration and re-emitted here.
-    if any(not _is_jiti_decorator(decorator) for decorator in node.decorator_list):
-        raise MergeError(f"cannot merge `{qualname}`: it carries decorators other than @jiti.")
-    spliced = _splice(source.splitlines(), node, section_body)
+    # _find_jiti_def_at already guarantees node has a @jiti decorator; this just locates it.
+    jiti_decorator = next(d for d in node.decorator_list if _is_jiti_decorator(d))
+    spliced = _splice(source.splitlines(), node, section_body, jiti_decorator)
     needed = _strip_self_imports(file_imports, own_module)
     if needed:
         spliced = _inject_imports(spliced, needed)
@@ -105,14 +105,20 @@ def _is_jiti_decorator(node: ast.expr) -> bool:
     return isinstance(node, ast.Name) and node.id == "jiti"
 
 
-def _splice(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef, body: str) -> str:
-    """Replace the def's full span with `body`, preserving the user's signature line(s).
+def _splice(
+    lines: list[str],
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    body: str,
+    jiti_decorator: ast.expr,
+) -> str:
+    """Replace the `@jiti` decorator + def body with `body`, preserving the user's signature.
 
     The user's signature is the contract — keeping it sidesteps Python forward-reference issues
     (a method body referring to its enclosing class by name) and any cosmetic drift the agent
-    introduced (e.g. unquoted vs quoted annotations).
+    introduced (e.g. unquoted vs quoted annotations). Decorators above `@jiti` (e.g.
+    `@staticmethod`) live at lower line numbers in source and are left untouched.
     """
-    start = min((decorator.lineno for decorator in node.decorator_list), default=node.lineno)
+    start = jiti_decorator.lineno
     end = node.end_lineno or node.lineno
     rebuilt = _replace_signature_in_body(lines, node, body)
     body_lines = _reindent(rebuilt, node.col_offset).splitlines()
