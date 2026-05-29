@@ -16,12 +16,12 @@ import os
 import subprocess
 import sys
 import traceback
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import NamedTuple, cast
+from typing import Protocol, cast
 
 from pydantic import ConfigDict, validate_call
 
@@ -55,11 +55,13 @@ def _test_failures() -> tuple[type[BaseException], ...]:
 _TEST_FAILURES = _test_failures()
 
 
-class MethodPatch(NamedTuple):
-    """The class and method to temporarily bind a candidate onto during method validation."""
+class RoutingTarget(Protocol):
+    """A `_JitiCallable`-like object that exposes `routing_to(candidate)` for validation.
 
-    class_name: str
-    method: str
+    Defined as a Protocol here so `validate.py` (core) doesn't import the decorator module.
+    """
+
+    def routing_to(self, candidate: Callable[..., object]) -> AbstractContextManager[None]: ...
 
 
 @dataclass(frozen=True)
@@ -93,22 +95,24 @@ def validate(
     test_source: str,
     *,
     import_path: Sequence[str] = (),
-    patch: MethodPatch | None = None,
     name: str | None = None,
-    module: str | None = None,
     gates: Sequence[Gate] = (),
+    routing_target: RoutingTarget | None = None,
     execute: bool = True,
 ) -> ValidationResult:
     """Lint, type-check, and (unless `execute` is False) run a candidate's tests.
 
-    For a free function, `test_source` calls it by bare name (impl and tests share one
-    namespace). For a method, `patch=(ClassName, method)` temporarily binds the candidate
-    onto the authored class so the tests' `obj.method(...)` calls reach the candidate.
+    The candidate impl is exec'd into a fresh namespace; the agent's `test_*` functions are
+    exec'd alongside so bare-name calls reach the candidate directly. When `routing_target`
+    is provided (the `_JitiCallable` for this declaration), the candidate is bound onto it
+    via `routing_to(candidate)` for the duration of the test/gate run — so calls that go
+    through any wrapper stack (`obj.method(...)`, gates calling the target by its imported
+    name) reach the candidate through the JitiCallable's existing dispatch path, with no
+    extra patching of bindings.
 
-    `gates` are live tests (from `jiti.required_for`); for each, the target `module.name` is
-    bound to the candidate (in the module and in the test's globals) so it exercises the
-    candidate however it imported the target. `execute=False` (test-mode) lints and
-    type-checks only — used when generating a test against a not-yet-implemented target.
+    `gates` are live tests (from `jiti.required_for`); each runs after the agent's tests in
+    the same routing context. `execute=False` (test-mode) lints and type-checks only — used
+    when generating a test against a not-yet-implemented target.
     """
     with TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -121,9 +125,7 @@ def validate(
             *_ty_on_tests(workdir, formatted, test_source, import_path, execute=execute),
         )
         tests = (
-            _run_tests(formatted, test_source, patch, name or "", module or "", gates)
-            if execute
-            else ()
+            _run_tests(formatted, test_source, name or "", gates, routing_target) if execute else ()
         )
         checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
@@ -181,10 +183,9 @@ def _candidate_import(impl_source: str) -> str:
 def _run_tests(
     impl_source: str,
     test_source: str,
-    patch: MethodPatch | None,
     name: str,
-    module: str,
     gates: Sequence[Gate],
+    routing_target: RoutingTarget | None,
 ) -> tuple[Check, ...]:
     namespace: dict[str, object] = {}
     try:
@@ -195,81 +196,32 @@ def _run_tests(
         exec(compile(test_source, "<jiti-candidate-tests>", "exec", dont_inherit=True), namespace)
     except Exception:
         return (Check("tests", ok=False, output=cap(traceback.format_exc())),)
-    with _candidate_method(namespace, patch):
+    contracted = namespace.get(name)
+    routing = (
+        routing_target.routing_to(cast("Callable[..., object]", contracted))
+        if routing_target is not None and callable(contracted)
+        else nullcontext()
+    )
+    with routing:
         tests = _call_tests(namespace)
         if not gates:
             return (tests,)
-        return (tests, _run_gates(namespace.get(name), name, module, gates))
+        return (tests, _run_gates(contracted, gates))
 
 
-def _run_gates(candidate: object, name: str, module: str, gates: Sequence[Gate]) -> Check:
+def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
     if not callable(candidate):
         return Check("gates", ok=False, output="the implementation did not define the target.")
     failures: list[str] = []
     for gate in gates:
-        with _bound_to_candidate(gate, name, module, candidate):
-            try:
-                if gate.test is not None:
-                    gate.test()
-            except JitiError:
-                raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
-            except _TEST_FAILURES:
-                failures.append(f"{gate.name}:\n{traceback.format_exc()}")
+        try:
+            if gate.test is not None:
+                gate.test()
+        except JitiError:
+            raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
+        except _TEST_FAILURES:
+            failures.append(f"{gate.name}:\n{traceback.format_exc()}")
     return Check("gates", ok=not failures, output=cap("\n\n".join(failures)))
-
-
-_MISSING = object()
-
-
-@contextmanager
-def _bound_to_candidate(gate: Gate, name: str, module: str, candidate: object) -> Iterator[None]:
-    """Point the target at the candidate however the gate reaches it, then restore.
-
-    Patches the target's module attribute (covers a local `from x import target` or `x.target`)
-    and any name in the test's own globals (covers a module-level `from x import target`).
-    """
-    bindings: list[tuple[dict[str, object], str]] = []
-    target_module = sys.modules.get(module)
-    if target_module is not None:
-        bindings.append((target_module.__dict__, name))
-    if gate.test is not None:
-        scope = gate.test.__globals__
-        bindings.extend((scope, key) for key, value in list(scope.items()) if value is gate.target)
-    saved = [(scope, key, scope.get(key, _MISSING)) for scope, key in bindings]
-    for scope, key in bindings:
-        scope[key] = candidate
-    try:
-        yield
-    finally:
-        for scope, key, value in saved:
-            if value is _MISSING:
-                scope.pop(key, None)
-            else:
-                scope[key] = value
-
-
-@contextmanager
-def _candidate_method(namespace: dict[str, object], patch: MethodPatch | None) -> Iterator[None]:
-    """Bind the candidate onto the authored class for the test run, then restore it.
-
-    Generation is synchronous (the real call is suspended), so this mutation is invisible
-    and always undone — `obj.method(...)` in the tests reaches the candidate, not the stub.
-    """
-    cls = namespace.get(patch.class_name) if patch else None
-    if patch is None or not isinstance(cls, type) or patch.method not in namespace:
-        yield
-        return
-    method = patch.method
-    missing = object()
-    original = cls.__dict__.get(method, missing)
-    setattr(cls, method, namespace[method])
-    try:
-        yield
-    finally:
-        if original is missing:
-            delattr(cls, method)
-        else:
-            setattr(cls, method, original)
 
 
 def _call_tests(namespace: dict[str, object]) -> Check:

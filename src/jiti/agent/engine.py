@@ -26,6 +26,7 @@ from jiti.core.errors import ConflictError, GenerationCycleError, GenerationErro
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
 from jiti.core.models import DEFAULT_MODEL, Model, resolve_default
 from jiti.core.store import Action, JitiStore, scratch_rename
+from jiti.core.validate import RoutingTarget
 
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_TURNS = 40
@@ -65,7 +66,12 @@ class Engine:
         import_test_modules(self.test_paths)
 
     def implement(
-        self, declaration: Declaration, args: tuple[object, ...], kwargs: dict[str, object]
+        self,
+        declaration: Declaration,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+        *,
+        target: RoutingTarget | None = None,
     ) -> Any:
         resolution = self.store.resolve(declaration)
         if resolution.action is Action.CONFLICT:
@@ -74,11 +80,15 @@ class Engine:
                 "has since changed. Reconcile them before running."
             )
         if resolution.action in (Action.GENERATE, Action.REGENERATE):
-            self._generate(declaration, args, kwargs)
+            self._generate(declaration, args, kwargs, target)
         return self.store.load(declaration)
 
     def _generate(
-        self, declaration: Declaration, args: tuple[object, ...], kwargs: dict[str, object]
+        self,
+        declaration: Declaration,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+        target: RoutingTarget | None,
     ) -> None:
         key = declaration.key
         if key in self._in_progress:
@@ -99,6 +109,7 @@ class Engine:
                 import_path=_import_path(declaration),
                 gates=gates,
                 recorder=recorder,
+                target=target,
             )
             total_cost = self._run_agent(
                 context,

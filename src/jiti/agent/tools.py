@@ -23,7 +23,7 @@ from jiti.agent.transcript import Recorder
 from jiti.core.declaration import Declaration, Gate, splice
 from jiti.core.errors import JitiError
 from jiti.core.log import logger
-from jiti.core.validate import MethodPatch, cap, validate
+from jiti.core.validate import RoutingTarget, cap, validate
 
 _RG_INSTALL_HINT = (
     "jiti's `grep` tool requires `rg` (ripgrep) on PATH. Install:\n"
@@ -145,6 +145,10 @@ class CallContext:
     """The last passing candidate's self-reported quality; the engine loop reads it for refactor."""
     recorder: Recorder | None = None
     """Optional transcript recorder; dispatch logs each tool call/result here when set."""
+    target: RoutingTarget | None = None
+    """The `_JitiCallable` for this declaration. During validation, the candidate is bound to
+    its `_impl` so any call routed through the wrapper stack (gate tests, agent tests using
+    `obj.method(...)`) short-circuits to the candidate instead of re-entering generation."""
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
@@ -186,17 +190,13 @@ class CallContext:
             impl = splice(self.declaration, body, helpers)
         except JitiError as exc:
             return f"FAILED:\n[contract]\n{exc}"
-        patch = None
-        if self.declaration.class_context is not None:
-            patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
         result = validate(
             impl,
             tests,
             import_path=self.import_path,
-            patch=patch,
             name=self.declaration.name,
-            module=self.declaration.module,
             gates=self.gates,
+            routing_target=self.target,
         )
         if not result.ok:
             return f"FAILED:\n{result.report}"
