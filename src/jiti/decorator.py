@@ -13,9 +13,21 @@ import types
 from collections.abc import Callable
 from typing import Any, cast, overload
 
+from pydantic import ConfigDict, validate_call
+
 from jiti.agent.engine import Engine, default_engine
 from jiti.core.declaration import Declaration, Gate, analyze_body, gate_for, introspect
 from jiti.core.errors import JitiError
+
+# Runtime contract enforcement on every call to a generated impl: strict mode disables
+# pydantic's default coercion (so a buggy `parse(123)` against `(text: str)` raises instead
+# of being silently fixed), `validate_return` checks the return type, and arbitrary types
+# (dataclasses, user classes) are accepted via isinstance. After `jiti merge` strips the
+# wrapper this validation goes away — by design.
+_validate_call = validate_call(
+    config=ConfigDict(strict=True, arbitrary_types_allowed=True),
+    validate_return=True,
+)
 
 
 class _JitiCallable:
@@ -57,7 +69,7 @@ class _JitiCallable:
         if self._impl is None:
             engine = self._engine or default_engine()
             engine.discover()  # import test modules so `required_for` gates are registered first
-            self._impl = engine.implement(self.declaration(), args, kwargs)
+            self._impl = _validate_call(engine.implement(self.declaration(), args, kwargs))
         return self._impl
 
 
