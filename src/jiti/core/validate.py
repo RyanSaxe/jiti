@@ -122,10 +122,28 @@ def validate(
         lint = (
             _lint("ruff", RUFF, ["check", str(impl_file)], workdir, import_path),
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
+            *_ty_on_tests(workdir, test_source, import_path, execute=execute),
         )
         tests = _run_tests(formatted, test_source, patch, name, module, gates) if execute else ()
         checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
+
+
+def _ty_on_tests(
+    workdir: Path, test_source: str, import_path: Sequence[str], *, execute: bool
+) -> tuple[Check, ...]:
+    """Type-check the test file too: a `parse(123)` against `def parse(text: str)` should fail
+    statically here, before runtime, so the agent can't "fix" the impl to accept the bad type.
+
+    Tests use the impl by bare name (shared exec namespace), so we prepend `from candidate
+    import *` to give ty the same scope. Skipped in test-mode generation (`execute=False`),
+    where the candidate is itself a test stub and no companion test source exists yet.
+    """
+    if not execute or not test_source.strip():
+        return ()
+    test_file = workdir / "test_candidate.py"
+    test_file.write_text("from candidate import *  # noqa: F401, F403\n\n" + test_source)
+    return (_lint("ty-tests", TY, ["check", str(test_file)], workdir, import_path),)
 
 
 def _run_tests(
