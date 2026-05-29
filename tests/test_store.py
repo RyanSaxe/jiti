@@ -125,6 +125,26 @@ def test_multiple_declarations_share_one_companion_file(store):
     assert store.read_section(parse).body == "def parse():\n    return 1"
 
 
+def test_section_header_surfaces_user_decorators(store):
+    declaration = make_declaration(user_decorators=("staticmethod",))
+    store.write(declaration, IMPL, TESTS)
+
+    text = store.impl_path(declaration).read_text()
+    assert "# user-decorators: @staticmethod" in text
+
+    # Round-trip through parse — the field survives.
+    section = store.read_section(declaration)
+    assert section is not None
+    assert section.user_decorators == ("staticmethod",)
+
+
+def test_section_header_omits_user_decorators_when_none(store):
+    declaration = make_declaration()
+    store.write(declaration, IMPL, TESTS)
+
+    assert "user-decorators" not in store.impl_path(declaration).read_text()
+
+
 def test_loaded_function_has_live_annotation_objects_not_strings(store):
     """compile() inherits the caller's __future__ flags by default; store.py has
     `from __future__ import annotations`, which would silently stringify every loaded

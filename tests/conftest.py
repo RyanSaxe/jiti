@@ -20,6 +20,7 @@ def make_declaration(
     docstring: str = "doc",
     signature: inspect.Signature | None = None,
     def_line: str | None = None,
+    user_decorators: tuple[str, ...] = (),
 ) -> Declaration:
     """Build a `Declaration` for tests that don't need to introspect a real stub."""
     name = qualname.split(".")[-1]
@@ -33,6 +34,7 @@ def make_declaration(
         available_symbols=(),
         class_context=None,
         def_line=def_line if def_line is not None else f"def {name}():",
+        user_decorators=user_decorators,
     )
 
 

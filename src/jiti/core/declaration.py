@@ -12,6 +12,7 @@ import ast
 import hashlib
 import inspect
 import io
+import sys
 import textwrap
 import tokenize
 import types
@@ -76,6 +77,11 @@ class Declaration:
     def_line: str
     """The stub's `def name(...) -> ret:` text, spliced verbatim into the `.jiti` file."""
 
+    user_decorators: tuple[str, ...] = ()
+    """Decorators stacked above `@jiti` on the user's stub (e.g. `staticmethod`, `lru_cache`).
+    Informational only — surfaced in the `.jiti` section header so a reader of a generated
+    file knows what wrappers the runtime call goes through. Does NOT feed `spec_hash`."""
+
     gates: tuple[Gate, ...] = ()
 
     @property
@@ -112,8 +118,48 @@ def introspect(
         available_symbols=_module_symbols(func),
         class_context=class_context,
         def_line=extract_def_line(source, func.__name__),
+        user_decorators=_detect_user_decorators(func, owner),
         gates=gates,
     )
+
+
+def _detect_user_decorators(func: types.FunctionType, owner: type | None) -> tuple[str, ...]:
+    """Detect descriptor decorators (`@staticmethod`, `@classmethod`, `@property`) stacked
+    above `@jiti` on a method stub.
+
+    Only methods are inspected — descriptor-style wrappers are what live on the class. A
+    `@lru_cache @jiti` on a free function (or above a method) doesn't show up here: the
+    cache wraps the `_JitiCallable` itself, and we lose visibility once it's gone behind
+    the wrapper. The header is best-effort context, not a complete dependency graph.
+    """
+    cls = owner or _resolve_owner(func)
+    if cls is None:
+        return ()
+    attr = cls.__dict__.get(func.__name__)
+    decorators: list[str] = []
+    if isinstance(attr, staticmethod):
+        decorators.append("staticmethod")
+    elif isinstance(attr, classmethod):
+        decorators.append("classmethod")
+    elif isinstance(attr, property):
+        decorators.append("property")
+    return tuple(decorators)
+
+
+def _resolve_owner(func: types.FunctionType) -> type | None:
+    """Find the enclosing class via `__qualname__` when `__set_name__` didn't fire — e.g.
+    when a class-level decorator (`@staticmethod`) wraps the `_JitiCallable`."""
+    if "." not in func.__qualname__ or "<locals>" in func.__qualname__:
+        return None
+    module = sys.modules.get(func.__module__)
+    if module is None:
+        return None
+    obj: object = module
+    for part in func.__qualname__.rsplit(".", 1)[0].split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return obj if isinstance(obj, type) else None
 
 
 def is_stub(func: types.FunctionType) -> bool:
