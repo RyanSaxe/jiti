@@ -35,11 +35,11 @@ def test_submit_reports_failure_then_success():
     context = CallContext(introspect(double), ([1, 2],), {})
     tests = "def test_double():\n    assert double([1, 2]) == [2, 4]"
 
-    failed = context.submit("def double(items):\n    return items", tests)
+    failed = context.submit("return items", "", tests)
     assert failed.startswith("FAILED")
     assert context.passing is None
 
-    passed = context.submit("def double(items):\n    return [i * 2 for i in items]", tests)
+    passed = context.submit("return [i * 2 for i in items]", "", tests)
     assert passed.startswith("PASSED")
     assert context.passing is not None
 

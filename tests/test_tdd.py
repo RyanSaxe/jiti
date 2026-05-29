@@ -35,8 +35,8 @@ def test_jiti_test_is_generated_then_gates_the_impl():
         "    assert tdd_double(2) == 4\n"
         "    assert tdd_double(5) == 10"
     )
-    correct = "def tdd_double(x: int) -> int:\n    return x * 2"
-    wrong = "def tdd_double(x: int) -> int:\n    return x + 2"  # passes own test, fails the gate
+    correct = "return x * 2"
+    wrong = "return x + 2"  # passes own test, fails the gate
     agent_tests = "def test_d():\n    assert tdd_double(2) == 4"  # true for both impls
     _CLIENT.script = [
         submit_test("gate", jiti_test_body),  # test-mode generation (ruff + ty only)

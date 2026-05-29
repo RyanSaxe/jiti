@@ -31,9 +31,9 @@ def slugify(text: str) -> str:
 
 
 def test_bad_arg_type_to_a_jiti_function_raises_validation_error(tmp_path):
-    impl = "def slugify(text: str) -> str:\n    return text.lower().replace(' ', '-')"
+    body = "return text.lower().replace(' ', '-')"
     tests = "def test_s():\n    assert slugify('Hi There') == 'hi-there'"
-    engine = _engine(tmp_path, submit("slugify", impl, tests))
+    engine = _engine(tmp_path, submit("slugify", body, tests))
 
     wrapped = jiti(engine=engine)(slugify)
 
@@ -60,11 +60,11 @@ class Doubler:
 
 
 def test_method_violation_reaches_pydantic_through_get_binding():
-    impl = "def scaled(self, n: int) -> int:\n    return self.base * n"
+    body = "return self.base * n"
     tests = (
         f"from {__name__} import Doubler\n\ndef test_s():\n    assert Doubler(3).scaled(4) == 12"
     )
-    _METHOD_CLIENT.script = [submit("scaled", impl, tests)]
+    _METHOD_CLIENT.script = [submit("scaled", body, tests)]
 
     assert Doubler(3).scaled(4) == 12  # warms the cache; uses __get__
     with pytest.raises(ValidationError):
@@ -85,15 +85,13 @@ def parse_version(text: str) -> Version:
 
 
 def test_arbitrary_dataclass_return_is_accepted_end_to_end(tmp_path):
-    impl = (
-        f"from {__name__} import Version\n\n"
-        "def parse_version(text: str) -> Version:\n    return Version(int(text))"
-    )
+    body = "return Version(int(text))"
+    helpers = f"from {__name__} import Version"
     tests = (
         f"from {__name__} import Version\n\n"
         "def test_v():\n    assert parse_version('7') == Version(7)"
     )
-    engine = _engine(tmp_path, submit("parse_version", impl, tests))
+    engine = _engine(tmp_path, submit("parse_version", body, tests, helpers=helpers))
     wrapped = jiti(engine=engine)(parse_version)
 
     assert wrapped("7") == Version(7)
@@ -111,9 +109,9 @@ def takes_int_jiti(n: int) -> int:
 
 def test_strict_mode_is_in_effect_on_jiti_wrapped_functions(tmp_path):
     """If decorator.py ever drops strict=True, calling with '5' would silently succeed."""
-    impl = "def takes_int_jiti(n: int) -> int:\n    return n + 1"
+    body = "return n + 1"
     tests = "def test_t():\n    assert takes_int_jiti(2) == 3"
-    engine = _engine(tmp_path, submit("takes_int_jiti", impl, tests))
+    engine = _engine(tmp_path, submit("takes_int_jiti", body, tests))
     wrapped = jiti(engine=engine)(takes_int_jiti)
 
     assert wrapped(2) == 3

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from jiti.agent.transcript import Recorder
-from jiti.core.declaration import Declaration, Gate
+from jiti.core.declaration import Declaration, Gate, splice
 from jiti.core.errors import JitiError
 from jiti.core.log import logger
 from jiti.core.validate import MethodPatch, cap, validate
@@ -97,9 +97,20 @@ _SG = _tool(
 _SUBMIT = _tool(
     "submit",
     "Validate a candidate: ruff + ty on the implementation, then run the tests in-process. "
-    "`tests` reference the function by its bare name. Returns PASSED or the failures to fix. "
-    "Submit repeatedly until it passes; the last passing one is kept.",
-    impl={"type": "string", "description": "The implementation module source."},
+    "Write the function BODY only — jiti splices the target's signature in for you. Put any "
+    "PRIVATE helpers, module-level constants, and imports in `helpers`. `tests` reference the "
+    "target by its bare name. Returns PASSED or the failures to fix. Submit repeatedly until "
+    "it passes; the last passing one is kept.",
+    body={
+        "type": "string",
+        "description": "The function body, no `def` line. Write it as you would write it "
+        "inside the function — indentation is flexible (jiti normalizes it).",
+    },
+    helpers={
+        "type": "string",
+        "description": "Module-level imports, constants, and PRIVATE helper definitions "
+        "(prefix names with `_`). Empty string if nothing is needed.",
+    },
     tests={"type": "string", "description": "Named test_* functions, bare-name calls."},
     quality={
         "type": "integer",
@@ -170,7 +181,11 @@ class CallContext:
         ).stdout
         return cap(found) or "(no matches)"
 
-    def submit(self, impl: str, tests: str, quality: int = 10) -> str:
+    def submit(self, body: str, helpers: str, tests: str, quality: int = 10) -> str:
+        try:
+            impl = splice(self.declaration, body, helpers)
+        except JitiError as exc:
+            return f"FAILED:\n[contract]\n{exc}"
         patch = None
         if self.declaration.class_context is not None:
             patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)

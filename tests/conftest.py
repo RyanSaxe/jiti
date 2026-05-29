@@ -19,17 +19,20 @@ def make_declaration(
     qualname: str = "slugify",
     docstring: str = "doc",
     signature: inspect.Signature | None = None,
+    def_line: str | None = None,
 ) -> Declaration:
     """Build a `Declaration` for tests that don't need to introspect a real stub."""
+    name = qualname.split(".")[-1]
     return Declaration(
         module=module,
         qualname=qualname,
-        name=qualname.split(".")[-1],
+        name=name,
         signature=signature if signature is not None else inspect.Signature(),
         docstring=docstring,
         hint=None,
         available_symbols=(),
         class_context=None,
+        def_line=def_line if def_line is not None else f"def {name}():",
     )
 
 

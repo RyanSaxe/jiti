@@ -1,127 +1,127 @@
-"""Signature drift detection: a hand-edit to `.jiti/` that breaks the contract fails loudly.
+"""Body-only contract: jiti splices the stub's def line; agents write only the body.
 
-The spec-hash already invalidates when the *spec* changes; this catches the reverse — the
-loaded impl's signature diverging from the spec, which would otherwise let wrong types
-reach runtime far from the cause.
+The pre-body-only design needed a signature-drift comparator because agents could emit a
+mismatched def line; now the def line is byte-identical to the stub's by construction, so
+the tests here pin the splicing pipeline and the helper-contract guard rails instead.
 """
 
 import inspect
 
 import pytest
-from conftest import make_declaration
 
-from jiti.core.declaration import compare_signatures
+from jiti.core.declaration import (
+    Declaration,
+    extract_def_line,
+    introspect,
+    splice,
+)
 from jiti.core.errors import JitiError
-from jiti.core.store import JitiStore
 
 
-def _sig(params: list[inspect.Parameter], ret: object = inspect.Signature.empty):
-    return inspect.Signature(parameters=params, return_annotation=ret)
-
-
-def _param(name: str, annotation: object = inspect.Parameter.empty) -> inspect.Parameter:
-    return inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation)
-
-
-def _decl(signature: inspect.Signature):
-    return make_declaration(module="app.core", qualname="run", signature=signature)
-
-
-# ---------- the comparator directly ----------
-
-
-def test_matching_signature_returns_none():
-    spec = _decl(_sig([_param("x", int)], int))
-
-    def run(x: int) -> int:
-        return x
-
-    assert compare_signatures(spec, run) is None
-
-
-def test_param_type_change_is_detected():
-    spec = _decl(_sig([_param("x", int)], int))
-
-    def run(x: str) -> int:
-        return x  # ty: ignore[invalid-return-type]
-
-    diff = compare_signatures(spec, run)
-
-    assert diff is not None
-    assert "x: int" in diff and "x: str" in diff
-
-
-def test_optional_int_and_int_or_none_are_equivalent():
-    """`Optional[int]` and `int | None` are equal in Python — element-wise annotation
-    comparison must not false-positive on the cosmetic difference."""
-    from typing import Optional
-
-    spec = _decl(_sig([_param("x", Optional[int])], int))  # noqa: UP045
-
-    def run(x: int | None) -> int:
-        return x or 0
-
-    assert compare_signatures(spec, run) is None
-
-
-def test_pep_695_type_alias_used_on_both_sides_does_not_drift():
-    """A PEP 695 `type` alias used literally on both sides should compare equal — the alias
-    object is the same identity, so element-wise annotation equality holds."""
-    namespace: dict[str, object] = {}
-    exec("type Vector = list[float]\ndef run(v: Vector) -> Vector:\n    return v", namespace)
-    loaded = namespace["run"]
-    assert callable(loaded)
-    spec = _decl(inspect.signature(loaded))
-
-    assert compare_signatures(spec, loaded) is None
-
-
-def test_future_annotations_in_loaded_impl_does_not_false_positive():
-    """A hand-edit that adds `from __future__ import annotations` to a `.jiti` file keeps the
-    annotations as strings. The comparator should still recognize them as equivalent."""
-    spec = _decl(_sig([_param("x", int)], int))
-    namespace: dict[str, object] = {}
-    exec(
-        "from __future__ import annotations\n\ndef run(x: int) -> int:\n    return x",
-        namespace,
-    )
-    loaded = namespace["run"]
-    assert callable(loaded)
-
-    assert compare_signatures(spec, loaded) is None
-
-
-# ---------- store.load enforcement ----------
-
-
-def test_store_load_raises_jiti_error_on_signature_drift(tmp_path):
-    store = JitiStore(tmp_path / ".jiti")
-    spec = _decl(_sig([_param("x", int)], int))
-    store.write(
-        spec,
-        "def run(x: int) -> int:\n    return x",
-        "def test_r():\n    assert run(1) == 1",
+def _decl(def_line: str, *, name: str = "run", module: str = "app.core") -> Declaration:
+    return Declaration(
+        module=module,
+        qualname=name,
+        name=name,
+        signature=inspect.Signature(),
+        docstring=None,
+        hint=None,
+        available_symbols=(),
+        class_context=None,
+        def_line=def_line,
     )
 
-    # Hand-edit the loaded impl to change the signature — simulates a user fiddling with
-    # the `.jiti` file in a way that breaks the contract.
-    path = store.impl_path(spec)
-    path.write_text(path.read_text().replace("def run(x: int) -> int:", "def run(x: str) -> int:"))
 
-    with pytest.raises(JitiError, match="Signature drift"):
-        store.load(spec)
+# ---------- extract_def_line ----------
 
 
-def test_store_load_succeeds_when_signatures_match(tmp_path):
-    """A clean round-trip must not be tripped up by the drift check."""
-    store = JitiStore(tmp_path / ".jiti")
-    spec = _decl(_sig([_param("x", int)], int))
-    store.write(
-        spec,
-        "def run(x: int) -> int:\n    return x * 2",
-        "def test_r():\n    assert run(3) == 6",
+def test_extract_def_line_single_line_signature():
+    source = "def run(x: int) -> int: ...\n"
+
+    assert extract_def_line(source, "run") == "def run(x: int) -> int:"
+
+
+def test_extract_def_line_signature_split_across_lines():
+    source = "def run(\n    x: int,\n    y: int,\n) -> int:\n    ...\n"
+
+    assert extract_def_line(source, "run") == "def run(\n    x: int,\n    y: int,\n) -> int:"
+
+
+def test_extract_def_line_strips_decorators():
+    """`extract_def_line` returns the `def ... :` slice — never the decorators above it."""
+    source = "@staticmethod\ndef run(x: int) -> int:\n    ...\n"
+
+    assert extract_def_line(source, "run") == "def run(x: int) -> int:"
+
+
+def test_introspect_populates_def_line_from_the_stub_source():
+    def run(x: int, y: int) -> int:
+        """Add x and y."""
+        ...
+
+    declaration = introspect(run)
+
+    assert declaration.def_line == "def run(x: int, y: int) -> int:"
+
+
+# ---------- splice ----------
+
+
+def test_splice_concatenates_helpers_def_line_and_indented_body():
+    declaration = _decl("def run(x: int) -> int:")
+
+    result = splice(declaration, body="return x + 1", helpers="")
+
+    assert result == "def run(x: int) -> int:\n    return x + 1\n"
+
+
+def test_splice_normalizes_body_indentation():
+    """A body the agent already indented (e.g. 8 spaces) is dedented and re-indented to 4."""
+    declaration = _decl("def run(x: int) -> int:")
+
+    result = splice(declaration, body="        return x + 1", helpers="")
+
+    assert "    return x + 1" in result
+    assert "        return x + 1" not in result
+
+
+def test_splice_places_helpers_above_the_def_line():
+    declaration = _decl("def run(x: int) -> int:")
+
+    result = splice(
+        declaration,
+        body="return _double(x)",
+        helpers="def _double(n: int) -> int:\n    return n * 2",
     )
 
-    loaded = store.load(spec)
+    assert result.index("_double") < result.index("def run")
 
-    assert loaded(5) == 10
+
+# ---------- helper contract ----------
+
+
+def test_splice_rejects_public_helper_definitions():
+    declaration = _decl("def run() -> int:")
+
+    with pytest.raises(JitiError, match="PRIVATE"):
+        splice(declaration, body="return helper()", helpers="def helper() -> int:\n    return 1")
+
+
+def test_splice_rejects_a_helper_named_like_the_target():
+    declaration = _decl("def run(x: int) -> int:", name="run")
+
+    with pytest.raises(JitiError, match="redefine the target"):
+        splice(declaration, body="return 1", helpers="def run(x: int) -> int:\n    return x")
+
+
+def test_splice_allows_private_helpers_and_constants():
+    declaration = _decl("def run(text: str) -> str:")
+
+    result = splice(
+        declaration,
+        body="return _PATTERN.sub('-', text.lower())",
+        helpers="import re\n\n_PATTERN = re.compile(r'\\s+')",
+    )
+
+    assert "_PATTERN" in result
+    assert "import re" in result

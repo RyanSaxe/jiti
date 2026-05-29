@@ -73,6 +73,9 @@ class Declaration:
     hint: str | None
     available_symbols: tuple[str, ...]
     class_context: ClassContext | None
+    def_line: str
+    """The stub's `def name(...) -> ret:` text, spliced verbatim into the `.jiti` file."""
+
     gates: tuple[Gate, ...] = ()
 
     @property
@@ -98,6 +101,7 @@ def introspect(
     Raises `RealBodyError` if the stub already has a real implementation.
     """
     class_context = class_context_of(owner, exclude=func.__name__) if owner else None
+    source = textwrap.dedent(inspect.getsource(func))
     return Declaration(
         module=func.__module__,
         qualname=func.__qualname__,
@@ -107,6 +111,7 @@ def introspect(
         hint=analyze_body(func),
         available_symbols=_module_symbols(func),
         class_context=class_context,
+        def_line=extract_def_line(source, func.__name__),
         gates=gates,
     )
 
@@ -131,32 +136,71 @@ def gate_for(test: types.FunctionType, target: Callable[..., object]) -> Gate:
     return Gate(name=test.__name__, kind="human", spec=source, test=test, target=target)
 
 
-def compare_signatures(spec: Declaration, loaded: Callable[..., object]) -> str | None:
-    """Return a human-readable diff if `loaded`'s signature doesn't match `spec`, else None.
+def splice(declaration: Declaration, body: str, helpers: str) -> str:
+    """Reconstruct the candidate's full source: `helpers + stub def line + indented body`.
 
-    Catches the case where a user hand-edits a `.jiti/` section's signature: the spec
-    invalidation path covers the reverse (spec edits regenerate via spec_hash), but a hand-
-    edit to a loaded impl can silently break the contract until the wrong types reach
-    runtime. Compares element-wise on annotation equality, not stringified form, so
-    semantically-equivalent forms (`Optional[int]` and `int | None`, `list[str]` and
-    `typing.List[str]`) don't trip a false positive.
+    `body` is the function body as the agent wrote it (any leading indent is normalized to
+    4-space depth). `helpers` is module-level code that goes above the def line; it must
+    contain only PRIVATE definitions (functions/classes whose names start with `_`) — public
+    names would pollute the user's public API once `jiti merge` lands the section in source.
     """
-    loaded_sig = _signature(loaded)
-    if _signatures_equivalent(spec.signature, loaded_sig):
-        return None
-    return f"  spec:   {spec.signature}\n  loaded: {loaded_sig}"
+    _check_helpers(helpers, declaration.name)
+    indented_body = textwrap.indent(textwrap.dedent(body).strip("\n"), "    ")
+    parts = [helpers.strip("\n"), "", declaration.def_line, indented_body]
+    return "\n".join(part for part in parts if part is not None).strip("\n") + "\n"
 
 
-def _signatures_equivalent(a: inspect.Signature, b: inspect.Signature) -> bool:
-    if list(a.parameters) != list(b.parameters):
-        return False
-    for pa, pb in zip(a.parameters.values(), b.parameters.values(), strict=True):
-        if pa.kind != pb.kind or pa.default != pb.default or pa.annotation != pb.annotation:
-            return False
-    return a.return_annotation == b.return_annotation
+def _check_helpers(helpers: str, target_name: str) -> None:
+    if not helpers.strip():
+        return
+    try:
+        tree = ast.parse(helpers)
+    except SyntaxError as exc:
+        raise JitiError(f"helpers does not parse as Python: {exc}") from exc
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            if node.name == target_name:
+                raise JitiError(
+                    f"helpers must not redefine the target `{target_name}`; jiti splices "
+                    "its def line — write only the body."
+                )
+            if not node.name.startswith("_"):
+                raise JitiError(
+                    f"helpers may only define PRIVATE names (got `{node.name}`); prefix it "
+                    "with `_` so `jiti merge` doesn't expand the user's public API."
+                )
 
 
-def _signature(func: Callable[..., object]) -> inspect.Signature:
+def extract_def_line(source: str, name: str) -> str:
+    """Return the `def name(...) -> ret:` text from a function's source — verbatim.
+
+    Used to splice the stub's signature into the generated `.jiti` file unchanged, so the
+    agent only writes the body. Strips leading decorators; walks from the `def` keyword to
+    the colon that ends the signature, handling multi-line signatures via the position of
+    the body's first statement.
+    """
+    node = _function_node(source, name)
+    lines = source.splitlines(keepends=True)
+    body_li, body_co = node.body[0].lineno - 1, node.body[0].col_offset
+    li, co = body_li, body_co - 1
+    while li >= 0:
+        line = lines[li]
+        while co >= 0:
+            if line[co] == ":":
+                def_li, def_co = node.lineno - 1, node.col_offset
+                if def_li == li:
+                    return lines[li][def_co : co + 1]
+                head = lines[def_li][def_co:]
+                middle = "".join(lines[def_li + 1 : li])
+                tail = lines[li][: co + 1]
+                return head + middle + tail
+            co -= 1
+        li -= 1
+        co = len(lines[li]) - 1 if li >= 0 else -1
+    raise JitiError(f"Could not locate the signature colon for {name}.")
+
+
+def _signature(func: types.FunctionType) -> inspect.Signature:
     # eval_str resolves stringized annotations (from `from __future__ import annotations` or
     # quoted forward refs) to real types, so the prompt shows `list[str]`, not `'list[str]'`.
     # This resolved signature also feeds the spec hash. Accepted edge: for a stub using such

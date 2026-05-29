@@ -150,20 +150,29 @@ def _ty_on_tests(
 
 
 def _candidate_import(impl_source: str) -> str:
-    """Return a `from candidate import a, b` line for the candidate's public top-level names."""
+    """Return a `from candidate import a, b` line for the candidate's public top-level names.
+
+    Picks up both definitions (functions/classes) and re-exports — names brought into the
+    module namespace via `import X` or `from M import X` — so a test that references an
+    imported type (e.g. a dataclass the impl imports back from the host) sees it under ty.
+    """
     try:
         tree = ast.parse(impl_source)
     except SyntaxError:
         return ""
-    names = [
-        node.name
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
-        and not node.name.startswith("_")
-    ]
-    if not names:
+    names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            if not node.name.startswith("_"):
+                names.append(node.name)
+        elif isinstance(node, ast.ImportFrom):
+            names.extend(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            names.extend((alias.asname or alias.name).split(".", 1)[0] for alias in node.names)
+    public = [name for name in dict.fromkeys(names) if not name.startswith("_") and name != "*"]
+    if not public:
         return ""
-    return f"from candidate import {', '.join(names)}\n\n"
+    return f"from candidate import {', '.join(public)}\n\n"
 
 
 def _run_tests(
