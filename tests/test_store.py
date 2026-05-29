@@ -137,3 +137,20 @@ def test_multiple_declarations_share_one_companion_file(store):
     assert store.impl_path(slugify) == store.impl_path(parse)
     assert store.read_section(slugify).body == IMPL
     assert store.read_section(parse).body == "def parse():\n    return 1"
+
+
+def test_loaded_function_has_live_annotation_objects_not_strings(store):
+    """compile() inherits the caller's __future__ flags by default; store.py has
+    `from __future__ import annotations`, which would silently stringify every loaded
+    function's annotations and break downstream introspection (pydantic, runtime checks).
+    Pin the `dont_inherit=True` fix that keeps annotations as live class objects."""
+    declaration = make_declaration(qualname="identity")
+    store.write(
+        declaration,
+        "def identity(x: int) -> int:\n    return x",
+        "def test_i():\n    assert identity(1) == 1",
+    )
+
+    loaded = store.load(declaration)
+
+    assert loaded.__annotations__ == {"x": int, "return": int}

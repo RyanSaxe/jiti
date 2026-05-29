@@ -172,7 +172,11 @@ class JitiStore:
             "__name__": f"_jiti.{declaration.module}",
             "__file__": str(path),
         }
-        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        # `dont_inherit=True` isolates the .jiti file from this module's compile flags —
+        # without it, `from __future__ import annotations` at the top of store.py leaks in
+        # and stringifies the loaded function's annotations, which breaks downstream
+        # introspection (e.g. pydantic's runtime type checks) that expect live class objects.
+        exec(compile(path.read_text(), str(path), "exec", dont_inherit=True), namespace)
         return namespace[declaration.name]
 
     def clear(self) -> None:
