@@ -10,7 +10,6 @@ from fakes import ScriptedClient, submit
 
 from jiti import jiti
 from jiti.agent.engine import Engine
-from jiti.core.declaration import introspect
 from jiti.core.store import JitiStore
 
 # ---------- @staticmethod @jiti ----------
@@ -100,17 +99,17 @@ def test_property_composes_with_jiti():
 
 
 def test_introspect_detects_user_decorators_from_class_attribute():
-    """`introspect` walks the class attribute to find descriptor decorators stacked above
+    """The Declaration's `user_decorators` reflects descriptor wrappers stacked above
     `@jiti` — even though `__set_name__` doesn't fire on the inner `_JitiCallable`."""
-    static_decl = introspect(_StaticHost.__dict__["doubled"].__func__._func)
+    static_decl = _StaticHost.__dict__["doubled"].__func__.declaration()
     assert static_decl.user_decorators == ("staticmethod",)
 
-    class_decl = introspect(_ClassHost.__dict__["scaled"].__func__._func)
+    class_decl = _ClassHost.__dict__["scaled"].__func__.declaration()
     assert class_decl.user_decorators == ("classmethod",)
 
     prop_attr = _PropHost.__dict__["doubled"]
     assert prop_attr.fget is not None
-    prop_decl = introspect(prop_attr.fget._func)
+    prop_decl = prop_attr.fget.declaration()
     assert prop_decl.user_decorators == ("property",)
 
 

@@ -108,16 +108,17 @@ def introspect(
     """
     class_context = class_context_of(owner, exclude=func.__name__) if owner else None
     source = textwrap.dedent(inspect.getsource(func))
+    node = _function_node(source, func.__name__)
     return Declaration(
         module=func.__module__,
         qualname=func.__qualname__,
         name=func.__name__,
         signature=_signature(func),
         docstring=inspect.getdoc(func),
-        hint=analyze_body(func),
+        hint=_analyze_node(source, node, func.__qualname__),
         available_symbols=_module_symbols(func),
         class_context=class_context,
-        def_line=extract_def_line(source, func.__name__),
+        def_line=_def_line_from_node(source, node),
         user_decorators=_detect_user_decorators(func, owner),
         gates=gates,
     )
@@ -221,29 +222,20 @@ def extract_def_line(source: str, name: str) -> str:
     """Return the `def name(...) -> ret:` text from a function's source — verbatim.
 
     Used to splice the stub's signature into the generated `.jiti` file unchanged, so the
-    agent only writes the body. Strips leading decorators; walks from the `def` keyword to
-    the colon that ends the signature, handling multi-line signatures via the position of
-    the body's first statement.
+    agent only writes the body. Takes everything from the `def` keyword's position up to
+    (but not including) the body's first statement, then trims trailing whitespace —
+    leaving the signature colon as the last character.
     """
-    node = _function_node(source, name)
+    return _def_line_from_node(source, _function_node(source, name))
+
+
+def _def_line_from_node(source: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     lines = source.splitlines(keepends=True)
-    body_li, body_co = node.body[0].lineno - 1, node.body[0].col_offset
-    li, co = body_li, body_co - 1
-    while li >= 0:
-        line = lines[li]
-        while co >= 0:
-            if line[co] == ":":
-                def_li, def_co = node.lineno - 1, node.col_offset
-                if def_li == li:
-                    return lines[li][def_co : co + 1]
-                head = lines[def_li][def_co:]
-                middle = "".join(lines[def_li + 1 : li])
-                tail = lines[li][: co + 1]
-                return head + middle + tail
-            co -= 1
-        li -= 1
-        co = len(lines[li]) - 1 if li >= 0 else -1
-    raise JitiError(f"Could not locate the signature colon for {name}.")
+    body_lineno = node.body[0].lineno
+    body_col = node.body[0].col_offset
+    head = "".join(lines[node.lineno - 1 : body_lineno - 1])
+    head += lines[body_lineno - 1][:body_col]
+    return head.rstrip()
 
 
 def _signature(func: types.FunctionType) -> inspect.Signature:
@@ -262,11 +254,15 @@ def _signature(func: types.FunctionType) -> inspect.Signature:
 def analyze_body(func: types.FunctionType) -> str | None:
     """Return the stub's comment hint (or None), rejecting a body with real statements."""
     source = textwrap.dedent(inspect.getsource(func))
-    node = _function_node(source, func.__name__)
-    body = _body_without_docstring(node)
-    if any(not _is_placeholder(statement) for statement in body):
+    return _analyze_node(source, _function_node(source, func.__name__), func.__qualname__)
+
+
+def _analyze_node(
+    source: str, node: ast.FunctionDef | ast.AsyncFunctionDef, qualname: str
+) -> str | None:
+    if any(not _is_placeholder(stmt) for stmt in _body_without_docstring(node)):
         raise RealBodyError(
-            f"{func.__qualname__} has an implementation; remove @jiti or reduce its "
+            f"{qualname} has an implementation; remove @jiti or reduce its "
             "body to a stub (docstring/comments and `...`)."
         )
     return _extract_comments(source)
