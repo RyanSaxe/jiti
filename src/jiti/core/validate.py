@@ -11,6 +11,7 @@ functions, and the agent's experiments run against copies — see `tools.py`.)
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -93,8 +94,8 @@ def validate(
     *,
     import_path: Sequence[str] = (),
     patch: MethodPatch | None = None,
-    name: str = "",
-    module: str = "",
+    name: str | None = None,
+    module: str | None = None,
     gates: Sequence[Gate] = (),
     execute: bool = True,
 ) -> ValidationResult:
@@ -119,7 +120,11 @@ def validate(
             _lint("ty", TY, ["check", str(impl_file)], workdir, import_path),
             *_ty_on_tests(workdir, test_source, import_path, execute=execute),
         )
-        tests = _run_tests(formatted, test_source, patch, name, module, gates) if execute else ()
+        tests = (
+            _run_tests(formatted, test_source, patch, name or "", module or "", gates)
+            if execute
+            else ()
+        )
         checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
 
@@ -130,15 +135,35 @@ def _ty_on_tests(
     """Type-check the test file too: a `parse(123)` against `def parse(text: str)` should fail
     statically here, before runtime, so the agent can't "fix" the impl to accept the bad type.
 
-    Tests use the impl by bare name (shared exec namespace), so we prepend `from candidate
-    import *` to give ty the same scope. Skipped in test-mode generation (`execute=False`),
-    where the candidate is itself a test stub and no companion test source exists yet.
+    Tests use the impl by bare name (shared exec namespace), so we explicitly import the
+    candidate's public names to give ty the same scope. Skipped in test-mode generation
+    (`execute=False`), where the candidate is itself a test stub and no companion test
+    source exists yet.
     """
     if not execute or not test_source.strip():
         return ()
+    impl_file = workdir / "candidate.py"
+    prelude = _candidate_import(impl_file.read_text())
     test_file = workdir / "test_candidate.py"
-    test_file.write_text("from candidate import *  # noqa: F401, F403\n\n" + test_source)
+    test_file.write_text(prelude + test_source)
     return (_lint("ty-tests", TY, ["check", str(test_file)], workdir, import_path),)
+
+
+def _candidate_import(impl_source: str) -> str:
+    """Return a `from candidate import a, b` line for the candidate's public top-level names."""
+    try:
+        tree = ast.parse(impl_source)
+    except SyntaxError:
+        return ""
+    names = [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        and not node.name.startswith("_")
+    ]
+    if not names:
+        return ""
+    return f"from candidate import {', '.join(names)}\n\n"
 
 
 def _run_tests(

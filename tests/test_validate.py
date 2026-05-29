@@ -64,6 +64,17 @@ def test_well_typed_tests_pass_ty_check():
     assert result.ok
 
 
+def test_ty_on_tests_skips_cleanly_when_candidate_exposes_no_public_names():
+    """A candidate that only defines private helpers shouldn't crash the test-side ty check
+    with `from candidate import` (empty)."""
+    impl = "def _helper() -> int:\n    return 1\n"
+    test = "def test_t():\n    assert True"
+
+    result = validate(impl, test, name="_helper")
+
+    assert result.ok
+
+
 def test_runtime_contract_catches_return_lies_that_evade_static_checks():
     """An impl that uses `cast` to lie about its return type slips past ty but is caught
     at test-run time by the runtime contract wrap. This pins that the validation pipeline
