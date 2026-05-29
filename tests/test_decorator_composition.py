@@ -110,6 +110,16 @@ def test_introspect_derives_call_style_for_each_descriptor_kind():
     assert prop_attr.fget.declaration().call_style is CallStyle.ATTRIBUTE
 
 
+def test_unwrap_finds_jiti_callable_through_classmethod_bound_method():
+    """`Class.classmethod_name` returns a bound method whose `__wrapped__` tunnels through
+    to the inner stub (overshooting). The unwrap must prefer `__func__` to land on the
+    JitiCallable — otherwise merge skips stacked classmethods as "no @jiti found"."""
+    from jiti.decorator import _JitiCallable, _unwrap_to_jiti_callable
+
+    assert isinstance(_unwrap_to_jiti_callable(_ClassHost.scaled), _JitiCallable)
+    assert isinstance(_unwrap_to_jiti_callable(_StaticHost.doubled), _JitiCallable)
+
+
 # ---------- @lru_cache @jiti ----------
 
 
