@@ -4,11 +4,19 @@ Every function below is a `@jiti` stub: the signature and docstring are the cont
 jiti writes the implementation the first time it's called. The functions build on each other
 (`satisfies` → `compare` → `parse`), so calling one cascades generation through the rest.
 
+`from __future__ import annotations` is on: every annotation here is a string at import
+time, so jiti must splice them verbatim and not try to resolve them at load time. Several
+methods stack a descriptor decorator above `@jiti` (`@staticmethod`, `@classmethod`,
+`@property`) so the eval also exercises the body-only contract under those wrappers.
+
 Run `python -m examples.semver demo` with `ANTHROPIC_API_KEY` set (and `JITI_LOG=info` to
 watch the calls) to generate the whole library in one go.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from functools import lru_cache
 
 from jiti import jiti
 
@@ -27,10 +35,29 @@ class Version:
         return f"{core}-{self.prerelease}" if self.prerelease else core
 
     @jiti
-    def bump(self, part: str) -> "Version":
+    def bump(self, part: str) -> Version:
         """Return a new Version with `part` ('major', 'minor', or 'patch') incremented and
         every lower part reset to 0, dropping any prerelease. Raise ValueError for an
         unknown part."""
+        ...
+
+    @property
+    @jiti
+    def is_stable(self) -> bool:
+        """True iff this version has no prerelease and its major is >= 1."""
+        ...
+
+    @classmethod
+    @jiti
+    def zero(cls) -> Version:
+        """Return the version 0.0.0 (no prerelease)."""
+        ...
+
+    @staticmethod
+    @jiti
+    def is_well_formed(text: str) -> bool:
+        """True iff `text` is a syntactically valid 'MAJOR.MINOR.PATCH[-prerelease]' string
+        with non-negative integer parts and no leading zeros. Does not raise."""
         ...
 
 
@@ -41,6 +68,7 @@ def parse(text: str) -> Version:
     ...
 
 
+@lru_cache(maxsize=128)
 @jiti
 def compare(a: str, b: str) -> int:
     """Compare two version strings by semver precedence, returning -1, 0, or 1. A release

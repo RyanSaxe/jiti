@@ -112,9 +112,9 @@ def _rewrite_user_test_file(test_path: Path, mirror: Path, test_names: set[str])
     test_module, _ = module_name(test_path)
     mirror_test = test_path_for_module(mirror, test_module)
     try:
-        _, mirror_sections = parse_file(mirror_test.read_text())
+        mirror_imports, mirror_sections = parse_file(mirror_test.read_text())
     except FileNotFoundError:
-        mirror_sections = {}
+        mirror_imports, mirror_sections = "", {}
 
     source = test_path.read_text()
     tree = ast.parse(source)
@@ -124,7 +124,13 @@ def _rewrite_user_test_file(test_path: Path, mirror: Path, test_names: set[str])
     lines = source.splitlines()
     for start, end, replacement in sorted(edits, key=lambda e: -e[0]):
         lines = lines[: start - 1] + replacement + lines[end:]
-    write_source(test_path, "\n".join(lines).rstrip("\n") + "\n")
+    new_source = "\n".join(lines).rstrip("\n") + "\n"
+    # Carry the mirror's imports so spliced bodies that reference `pytest`, the target, etc.
+    # have what they need. Ruff's batch pass at the end of merge dedupes them against the
+    # user's existing imports.
+    if mirror_imports.strip() and spliced_keys:
+        new_source = _inject_imports(new_source, mirror_imports)
+    write_source(test_path, new_source)
     for key in spliced_keys:
         drop_section(mirror_test, key)
     return test_path

@@ -35,8 +35,15 @@ class ScriptedClient:
         return response
 
 
-def submit(name: str, impl: str, tests: str, quality: int | None = None) -> Response:
-    payload: dict[str, Any] = {"impl": impl, "tests": tests}
+def submit(
+    name: str,
+    body: str,
+    tests: str,
+    helpers: str = "",
+    quality: int | None = None,
+) -> Response:
+    """Build a scripted `submit` tool-call: body-only contract; jiti splices the def line."""
+    payload: dict[str, Any] = {"body": body, "helpers": helpers, "tests": tests}
     if quality is not None:
         payload["quality"] = quality
     use = Block(type="tool_use", id=f"t-{name}", name="submit", input=payload)

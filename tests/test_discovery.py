@@ -43,8 +43,8 @@ def test_a_gate_in_a_separate_file_is_discovered_and_enforced(tmp_path):
         "    assert disco_target(4) == 8\n"
     )
     _ENGINE.test_paths = (str(tmp_path),)
-    passes_agent_not_gate = "def disco_target(x):\n    return x + 2"  # (2)==4 holds, (4)!=8 fails
-    correct = "def disco_target(x):\n    return x * 2"
+    passes_agent_not_gate = "return x + 2"  # (2)==4 holds, (4)!=8 fails
+    correct = "return x * 2"
     agent_tests = "def test_t():\n    assert disco_target(2) == 4"  # true for both candidates
     _CLIENT.script = [
         submit("disco_target", passes_agent_not_gate, agent_tests, quality=9),

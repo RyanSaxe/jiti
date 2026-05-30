@@ -93,7 +93,77 @@ def test_jiti_call_decorator_with_engine_is_replaced():
     assert "return x" in merged
 
 
-def test_extra_non_jiti_decorator_is_rejected():
+def test_aliased_self_import_survives_merge():
+    """`from own_module import x as _x` introduces a NEW name; the merged body uses the
+    alias, so the import must NOT be stripped as a self-import."""
+    source = dedent("""\
+        from jiti import jiti
+
+
+        def helper():
+            return 1
+
+
+        @jiti
+        def f() -> int:
+            ...
+    """)
+    body = "def f() -> int:\n    return _helper()\n"
+    imports = "from app.m import helper as _helper"
+
+    merged = merge_into_source(source, "f", "app.m", body, imports)
+
+    assert "from app.m import helper as _helper" in merged
+    assert "return _helper()" in merged
+
+
+def test_unaliased_self_import_is_stripped():
+    """`from own_module import x` (no alias) is redundant once merged into own_module."""
+    source = dedent("""\
+        from jiti import jiti
+
+
+        def helper():
+            return 1
+
+
+        @jiti
+        def f() -> int:
+            ...
+    """)
+    body = "def f() -> int:\n    return helper()\n"
+
+    merged = merge_into_source(source, "f", "app.m", body, "from app.m import helper")
+
+    assert "from app.m import helper" not in merged
+
+
+def test_section_helpers_land_at_module_level_not_inside_class():
+    """A class-method section body that brings helpers (constants, imports) must put them
+    at module level on merge — not inline at the splice site, where they'd land inside
+    the class body and break syntax under decorators like `@staticmethod`."""
+    source = dedent("""\
+        from jiti import jiti
+
+
+        class Box:
+            @jiti
+            def is_valid(self) -> bool:
+                ...
+    """)
+    body = "_PATTERN = 42\n\ndef is_valid(self) -> bool:\n    return _PATTERN > 0\n"
+
+    merged = merge_into_source(source, "Box.is_valid", "app.m", body, "")
+
+    # Helper landed at module level (before the class), not nested inside it.
+    assert merged.index("_PATTERN = 42") < merged.index("class Box")
+    # The def itself stays inside the class (indented one level).
+    assert "    def is_valid" in merged
+
+
+def test_non_jiti_decorator_above_jiti_is_preserved():
+    """Decorators stacked above `@jiti` (e.g. `@functools.cache`, `@staticmethod`) survive
+    the merge — only the `@jiti` line itself is dropped."""
     source = dedent("""\
         import functools
 
@@ -105,8 +175,25 @@ def test_extra_non_jiti_decorator_is_rejected():
         def f(x: int) -> int:
             ...
     """)
-    with pytest.raises(MergeError, match="other than @jiti"):
-        merge_into_source(source, "f", "app.m", "def f(x): return x\n", "")
+    merged = merge_into_source(source, "f", "app.m", "def f(x: int) -> int:\n    return x\n", "")
+
+    assert "@jiti" not in merged
+    assert "@functools.cache" in merged
+    assert merged.index("@functools.cache") < merged.index("def f")
+    assert "return x" in merged
+
+
+def test_no_jiti_decorator_at_all_is_rejected():
+    source = dedent("""\
+        import functools
+
+
+        @functools.cache
+        def f(x: int) -> int:
+            ...
+    """)
+    with pytest.raises(MergeError, match="no @jiti-decorated"):
+        merge_into_source(source, "f", "app.m", "def f(x: int) -> int:\n    return x\n", "")
 
 
 def test_multiline_signature_is_spliced_whole():

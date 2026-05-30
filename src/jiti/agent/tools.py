@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from jiti.agent.transcript import Recorder
-from jiti.core.declaration import Declaration, Gate
+from jiti.core.declaration import Declaration, Gate, splice
 from jiti.core.errors import JitiError
 from jiti.core.log import logger
-from jiti.core.validate import MethodPatch, cap, validate
+from jiti.core.validate import RoutingTarget, cap, validate
 
 _RG_INSTALL_HINT = (
     "jiti's `grep` tool requires `rg` (ripgrep) on PATH. Install:\n"
@@ -97,9 +97,20 @@ _SG = _tool(
 _SUBMIT = _tool(
     "submit",
     "Validate a candidate: ruff + ty on the implementation, then run the tests in-process. "
-    "`tests` reference the function by its bare name. Returns PASSED or the failures to fix. "
-    "Submit repeatedly until it passes; the last passing one is kept.",
-    impl={"type": "string", "description": "The implementation module source."},
+    "Write the function BODY only — jiti splices the target's signature in for you. Put any "
+    "PRIVATE helpers, module-level constants, and imports in `helpers`. `tests` reference the "
+    "target by its bare name. Returns PASSED or the failures to fix. Submit repeatedly until "
+    "it passes; the last passing one is kept.",
+    body={
+        "type": "string",
+        "description": "The function body, no `def` line. Write it as you would write it "
+        "inside the function — indentation is flexible (jiti normalizes it).",
+    },
+    helpers={
+        "type": "string",
+        "description": "Module-level imports, constants, and PRIVATE helper definitions "
+        "(prefix names with `_`). Empty string if nothing is needed.",
+    },
     tests={"type": "string", "description": "Named test_* functions, bare-name calls."},
     quality={
         "type": "integer",
@@ -134,6 +145,10 @@ class CallContext:
     """The last passing candidate's self-reported quality; the engine loop reads it for refactor."""
     recorder: Recorder | None = None
     """Optional transcript recorder; dispatch logs each tool call/result here when set."""
+    target: RoutingTarget | None = None
+    """The `_JitiCallable` for this declaration. During validation, the candidate is bound to
+    its `_impl` so any call routed through the wrapper stack (gate tests, agent tests using
+    `obj.method(...)`) short-circuits to the candidate instead of re-entering generation."""
 
     def inspect(self, expr: str) -> str:
         value = eval(expr, {**self._module_globals(), **self._bound_args()})
@@ -170,18 +185,18 @@ class CallContext:
         ).stdout
         return cap(found) or "(no matches)"
 
-    def submit(self, impl: str, tests: str, quality: int = 10) -> str:
-        patch = None
-        if self.declaration.class_context is not None:
-            patch = MethodPatch(self.declaration.class_context.name, self.declaration.name)
+    def submit(self, body: str, helpers: str, tests: str, quality: int = 10) -> str:
+        try:
+            impl = splice(self.declaration, body, helpers)
+        except JitiError as exc:
+            return f"FAILED:\n[contract]\n{exc}"
         result = validate(
             impl,
             tests,
             import_path=self.import_path,
-            patch=patch,
             name=self.declaration.name,
-            module=self.declaration.module,
             gates=self.gates,
+            routing_target=self.target,
         )
         if not result.ok:
             return f"FAILED:\n{result.report}"

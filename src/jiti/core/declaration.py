@@ -12,6 +12,7 @@ import ast
 import hashlib
 import inspect
 import io
+import sys
 import textwrap
 import tokenize
 import types
@@ -31,6 +32,29 @@ class BodyMode(Enum):
 
     HINT = "hint"
     """Body adds comments/pseudocode — generate, using the comments as guidance."""
+
+
+class CallStyle(Enum):
+    """How production code invokes this target — what the agent's tests must mirror.
+
+    Derived from the signature's first parameter plus a single descriptor check
+    (`hasattr(attr, 'fget')`) for property-likes. The four cases cover every callable
+    Python exposes at a class attribute or module top-level; custom descriptors that
+    aren't property-like fall under `METHOD`, which is the safe default.
+    """
+
+    BARE = "bare"
+    """Free function: tests call `name(args)`."""
+
+    STATIC = "static"
+    """Class member with no `self`/`cls`: tests call `Class.name(args)`."""
+
+    METHOD = "method"
+    """Class member with `self`/`cls` and at least one other param (or no `fget`):
+    tests build an instance and call `obj.name(args)`."""
+
+    ATTRIBUTE = "attribute"
+    """Property-like: tests access `Class(...).name` with no parens."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +97,13 @@ class Declaration:
     hint: str | None
     available_symbols: tuple[str, ...]
     class_context: ClassContext | None
+    def_line: str
+    """The stub's `def name(...) -> ret:` text, spliced verbatim into the `.jiti` file."""
+
+    call_style: CallStyle = CallStyle.BARE
+    """How production code invokes this target. The single signal every downstream layer
+    (prompt, validate, merge) reads to decide the calling pattern."""
+
     gates: tuple[Gate, ...] = ()
 
     @property
@@ -95,20 +126,70 @@ def introspect(
 ) -> Declaration:
     """Build a `Declaration` from a stub function and (for methods) its owner class.
 
+    `owner` is passed in for plain `@jiti` methods (where `__set_name__` fires on the
+    JitiCallable). For methods masked by an outer descriptor (`@staticmethod @jiti`,
+    `@property @jiti`, etc.) we recover the owner by walking `__qualname__` through
+    `sys.modules` — so every method gets a populated `class_context`, regardless of how
+    it's wrapped. `call_style` is derived from the resolved signature plus one descriptor
+    check; everything else (prompt, splice, eject) reads it as the single source of truth.
+
     Raises `RealBodyError` if the stub already has a real implementation.
     """
-    class_context = class_context_of(owner, exclude=func.__name__) if owner else None
+    cls = owner or _resolve_owner(func)
+    class_context = class_context_of(cls, exclude=func.__name__) if cls is not None else None
+    signature = _signature(func)
+    source = textwrap.dedent(inspect.getsource(func))
+    node = _function_node(source, func.__name__)
     return Declaration(
         module=func.__module__,
         qualname=func.__qualname__,
         name=func.__name__,
-        signature=_signature(func),
+        signature=signature,
         docstring=inspect.getdoc(func),
-        hint=analyze_body(func),
+        hint=_analyze_node(source, node, func.__qualname__),
         available_symbols=_module_symbols(func),
         class_context=class_context,
+        def_line=_def_line_from_node(source, node),
+        call_style=_call_style(cls, func.__name__, signature),
         gates=gates,
     )
+
+
+def _call_style(cls: type | None, name: str, signature: inspect.Signature) -> CallStyle:
+    """Derive the production calling pattern from the class context + signature shape.
+
+    Free function (no class): `BARE`. On a class:
+    - First param is `self`/`cls` and the attribute exposes `fget` → `ATTRIBUTE` (property-
+      like; works for `property`, `functools.cached_property`, Django/SQLAlchemy descriptors,
+      anything else following the `fget` convention).
+    - First param is `self`/`cls` → `METHOD` (bind an instance / call on the class).
+    - No `self`/`cls` first param → `STATIC` (call on the class directly).
+    """
+    if cls is None:
+        return CallStyle.BARE
+    parameters = list(signature.parameters.values())
+    receives_instance_or_class = bool(parameters) and parameters[0].name in {"self", "cls"}
+    if receives_instance_or_class and hasattr(cls.__dict__.get(name), "fget"):
+        return CallStyle.ATTRIBUTE
+    if receives_instance_or_class:
+        return CallStyle.METHOD
+    return CallStyle.STATIC
+
+
+def _resolve_owner(func: types.FunctionType) -> type | None:
+    """Find the enclosing class via `__qualname__` when `__set_name__` didn't fire — e.g.
+    when a class-level decorator (`@staticmethod`) wraps the `_JitiCallable`."""
+    if "." not in func.__qualname__ or "<locals>" in func.__qualname__:
+        return None
+    module = sys.modules.get(func.__module__)
+    if module is None:
+        return None
+    obj: object = module
+    for part in func.__qualname__.rsplit(".", 1)[0].split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return obj if isinstance(obj, type) else None
 
 
 def is_stub(func: types.FunctionType) -> bool:
@@ -131,6 +212,61 @@ def gate_for(test: types.FunctionType, target: Callable[..., object]) -> Gate:
     return Gate(name=test.__name__, kind="human", spec=source, test=test, target=target)
 
 
+def splice(declaration: Declaration, body: str, helpers: str) -> str:
+    """Reconstruct the candidate's full source: `helpers + stub def line + indented body`.
+
+    `body` is the function body as the agent wrote it (any leading indent is normalized to
+    4-space depth). `helpers` is module-level code that goes above the def line; it must
+    contain only PRIVATE definitions (functions/classes whose names start with `_`) — public
+    names would pollute the user's public API once `jiti merge` lands the section in source.
+    """
+    _check_helpers(helpers, declaration.name)
+    indented_body = textwrap.indent(textwrap.dedent(body).strip("\n"), "    ")
+    parts = [helpers.strip("\n"), "", declaration.def_line, indented_body]
+    return "\n".join(part for part in parts if part is not None).strip("\n") + "\n"
+
+
+def _check_helpers(helpers: str, target_name: str) -> None:
+    if not helpers.strip():
+        return
+    try:
+        tree = ast.parse(helpers)
+    except SyntaxError as exc:
+        raise JitiError(f"helpers does not parse as Python: {exc}") from exc
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            if node.name == target_name:
+                raise JitiError(
+                    f"helpers must not redefine the target `{target_name}`; jiti splices "
+                    "its def line — write only the body."
+                )
+            if not node.name.startswith("_"):
+                raise JitiError(
+                    f"helpers may only define PRIVATE names (got `{node.name}`); prefix it "
+                    "with `_` so `jiti merge` doesn't expand the user's public API."
+                )
+
+
+def extract_def_line(source: str, name: str) -> str:
+    """Return the `def name(...) -> ret:` text from a function's source — verbatim.
+
+    Used to splice the stub's signature into the generated `.jiti` file unchanged, so the
+    agent only writes the body. Takes everything from the `def` keyword's position up to
+    (but not including) the body's first statement, then trims trailing whitespace —
+    leaving the signature colon as the last character.
+    """
+    return _def_line_from_node(source, _function_node(source, name))
+
+
+def _def_line_from_node(source: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    lines = source.splitlines(keepends=True)
+    body_lineno = node.body[0].lineno
+    body_col = node.body[0].col_offset
+    head = "".join(lines[node.lineno - 1 : body_lineno - 1])
+    head += lines[body_lineno - 1][:body_col]
+    return head.rstrip()
+
+
 def _signature(func: types.FunctionType) -> inspect.Signature:
     # eval_str resolves stringized annotations (from `from __future__ import annotations` or
     # quoted forward refs) to real types, so the prompt shows `list[str]`, not `'list[str]'`.
@@ -147,11 +283,15 @@ def _signature(func: types.FunctionType) -> inspect.Signature:
 def analyze_body(func: types.FunctionType) -> str | None:
     """Return the stub's comment hint (or None), rejecting a body with real statements."""
     source = textwrap.dedent(inspect.getsource(func))
-    node = _function_node(source, func.__name__)
-    body = _body_without_docstring(node)
-    if any(not _is_placeholder(statement) for statement in body):
+    return _analyze_node(source, _function_node(source, func.__name__), func.__qualname__)
+
+
+def _analyze_node(
+    source: str, node: ast.FunctionDef | ast.AsyncFunctionDef, qualname: str
+) -> str | None:
+    if any(not _is_placeholder(stmt) for stmt in _body_without_docstring(node)):
         raise RealBodyError(
-            f"{func.__qualname__} has an implementation; remove @jiti or reduce its "
+            f"{qualname} has an implementation; remove @jiti or reduce its "
             "body to a stub (docstring/comments and `...`)."
         )
     return _extract_comments(source)

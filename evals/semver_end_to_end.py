@@ -72,6 +72,9 @@ def main() -> None:
     semver_test_dir = "examples/semver/tests"
     demo_cmd = ["uv", "run", "python", "-m", "examples.semver", "demo"]
 
+    step(0, "reset examples/semver/ to HEAD (undo any prior merge into source)")
+    run(["git", "checkout", "examples/semver/"])
+
     step(1, "clear .jiti/")
     run(["uv", "run", "jiti", "clear"])
 
@@ -105,7 +108,11 @@ def main() -> None:
             f"--- pre-merge ---\n{pre.stdout}\n--- post-merge ---\n{post.stdout}"
         )
 
-    print(f"\n{GREEN}All 8 steps passed.{RESET}")
+    step(9, "reset examples/semver/ + clear .jiti/ (leave the tree clean)")
+    run(["git", "checkout", "examples/semver/"])
+    run(["uv", "run", "jiti", "clear"])
+
+    print(f"\n{GREEN}All 9 steps passed.{RESET}")
 
 
 if __name__ == "__main__":

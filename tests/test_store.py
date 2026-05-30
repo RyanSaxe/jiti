@@ -3,23 +3,9 @@
 import inspect
 
 import pytest
+from conftest import make_declaration
 
-from jiti.core.declaration import Declaration
 from jiti.core.store import Action, JitiStore
-
-
-def make_declaration(*, module="app.text", qualname="slugify", docstring="doc") -> Declaration:
-    return Declaration(
-        module=module,
-        qualname=qualname,
-        name=qualname.split(".")[-1],
-        signature=inspect.Signature(),
-        docstring=docstring,
-        hint=None,
-        available_symbols=(),
-        class_context=None,
-    )
-
 
 IMPL = "def slugify():\n    return 'a'"
 TESTS = "def test_slugify():\n    assert slugify() == 'a'"
@@ -107,7 +93,11 @@ def test_imports_are_hoisted_deduped_and_bodies_left_import_free(store):
     assert store.read_section(a).body == "def a():\n    return re.compile('x')"  # body import-free
 
 
-def test_future_import_is_hoisted_and_the_file_stays_valid(store):
+def test_future_import_is_dropped_from_the_companion(store):
+    """`from __future__ import annotations` in the agent's helpers stringifies every
+    annotation, which breaks pydantic's runtime contract (it can't resolve names like
+    `Version` from the caller's frame). Drop the directive entirely on write — the user's
+    own source can use it freely; the `.jiti` file just needs live annotations."""
     declaration = make_declaration()
     store.write(
         declaration,
@@ -116,8 +106,8 @@ def test_future_import_is_hoisted_and_the_file_stays_valid(store):
     )
 
     text = store.impl_path(declaration).read_text()
-    compile(text, "<companion>", "exec")  # the original crash: __future__ must be file-first
-    assert "from __future__ import annotations" in text
+    compile(text, "<companion>", "exec")
+    assert "from __future__" not in text
 
 
 def test_write_publishes_atomically_leaving_no_temp_files(store):
@@ -137,3 +127,28 @@ def test_multiple_declarations_share_one_companion_file(store):
     assert store.impl_path(slugify) == store.impl_path(parse)
     assert store.read_section(slugify).body == IMPL
     assert store.read_section(parse).body == "def parse():\n    return 1"
+
+
+def test_loaded_function_has_live_annotation_objects_not_strings(store):
+    """compile() inherits the caller's __future__ flags by default; store.py has
+    `from __future__ import annotations`, which would silently stringify every loaded
+    function's annotations and break downstream introspection (pydantic, runtime checks).
+    Pin the `dont_inherit=True` fix that keeps annotations as live class objects."""
+    declaration = make_declaration(
+        qualname="identity",
+        signature=inspect.Signature(
+            parameters=[
+                inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=int)
+            ],
+            return_annotation=int,
+        ),
+    )
+    store.write(
+        declaration,
+        "def identity(x: int) -> int:\n    return x",
+        "def test_i():\n    assert identity(1) == 1",
+    )
+
+    loaded = store.load(declaration)
+
+    assert loaded.__annotations__ == {"x": int, "return": int}

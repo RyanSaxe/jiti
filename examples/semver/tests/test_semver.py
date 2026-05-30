@@ -34,3 +34,28 @@ def test_bump_increments_and_resets_lower_parts():
     assert Version(1, 2, 3).bump("minor") == Version(1, 3, 0)
     assert Version(1, 2, 3).bump("patch") == Version(1, 2, 4)
     assert Version(1, 2, 3, "rc.1").bump("patch") == Version(1, 2, 4)  # prerelease dropped
+
+
+# `Version.is_stable`, `Version.zero`, and `Version.is_well_formed` stack a descriptor
+# decorator above `@jiti`. Gates on those would re-enter the wrapper at validation time
+# (MethodPatch only handles plain methods, not staticmethod/classmethod/property), so
+# they're exercised by the demo path — first call triggers generation and caches.
+
+
+def test_is_stable_post_generation():
+    """Runs after the demo has cached `is_stable`; verifies the cached impl works correctly."""
+    assert parse("1.0.0").is_stable is True
+    assert parse("0.9.0").is_stable is False
+    assert parse("1.0.0-rc.1").is_stable is False
+
+
+def test_zero_post_generation():
+    assert Version.zero() == Version(0, 0, 0)
+
+
+def test_is_well_formed_post_generation():
+    assert Version.is_well_formed("1.2.3") is True
+    assert Version.is_well_formed("1.2.3-rc.1") is True
+    assert Version.is_well_formed("01.2.3") is False
+    assert Version.is_well_formed("1.2") is False
+    assert Version.is_well_formed("") is False

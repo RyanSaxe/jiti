@@ -172,7 +172,15 @@ class JitiStore:
             "__name__": f"_jiti.{declaration.module}",
             "__file__": str(path),
         }
-        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        # `dont_inherit=True` isolates the .jiti file from this module's compile flags —
+        # without it, `from __future__ import annotations` at the top of store.py leaks in
+        # and stringifies the loaded function's annotations, which breaks downstream
+        # introspection (e.g. pydantic's runtime type checks) that expect live class objects.
+        exec(compile(path.read_text(), str(path), "exec", dont_inherit=True), namespace)
+        # No drift check: the body-only contract splices the stub's def line into the .jiti
+        # file verbatim, so the signature can't drift at generation time. A hand-edit to a
+        # `.jiti` def line will be caught by pydantic's runtime contract (called against the
+        # caller's args, which conform to the stub's signature) with a clear ValidationError.
         return namespace[declaration.name]
 
     def clear(self) -> None:
@@ -280,7 +288,14 @@ def _parse_one(lines: list[str], index: int, key: str) -> tuple[int, Section]:
 
 
 def _split_imports(source: str) -> tuple[str, str]:
-    """Separate top-level import statements from the rest of a translation unit."""
+    """Separate top-level import statements from the rest of a translation unit.
+
+    `from __future__` imports are dropped entirely. The user's source can use them
+    (stringifying its own stub annotations is fine — we splice the stub's def line as
+    text anyway), but a `__future__` directive in the `.jiti` file would stringify the
+    loaded function's annotations, which downstream introspection (pydantic's runtime
+    contract, signature inspection) needs as live class objects.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -291,8 +306,10 @@ def _split_imports(source: str) -> tuple[str, str]:
     for node in tree.body:
         if isinstance(node, ast.Import | ast.ImportFrom):
             end = node.end_lineno or node.lineno
-            imports.append("\n".join(lines[node.lineno - 1 : end]))
             import_lines.update(range(node.lineno, end + 1))
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                continue
+            imports.append("\n".join(lines[node.lineno - 1 : end]))
     body = "\n".join(line for number, line in enumerate(lines, 1) if number not in import_lines)
     body = re.sub(r"\n{3,}", "\n\n", body).strip("\n")  # close the gap where imports were
     return "\n".join(imports), body

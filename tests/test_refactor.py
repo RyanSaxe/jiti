@@ -9,8 +9,8 @@ from jiti.agent.engine import Engine
 from jiti.core.store import JitiStore
 
 TESTS = "def test_f():\n    assert f(2) == 4"
-ROUGH = "def f(x):\n    return x*2"
-CLEAN = "def f(x):\n    return x * 2"
+ROUGH = "return x*2"
+CLEAN = "return x * 2"
 
 
 def _engine(client: ScriptedClient, tmp_path: Path, **kwargs) -> Engine:

@@ -29,8 +29,8 @@ def gate_double_is_doubling() -> None:
 
 
 def test_human_gate_forces_a_retry_until_satisfied():
-    passes_agent_but_not_gate = "def gated_double(x):\n    return x + 2"  # 2+2==4 but 4+2!=8
-    correct = "def gated_double(x):\n    return x * 2"
+    passes_agent_but_not_gate = "return x + 2"  # 2+2==4 but 4+2!=8
+    correct = "return x * 2"
     agent_tests = "def test_dbl():\n    assert gated_double(2) == 4"  # true for both impls
     _CLIENT.script = [
         submit("gated_double", passes_agent_but_not_gate, agent_tests),  # fails the gate
@@ -78,10 +78,8 @@ def gate_box_grow_adds_by() -> None:
 
 
 def test_human_gate_runs_against_a_method_candidate():
-    passes_agent_but_not_gate = (
-        "def grow(self, by):\n    self.size = self.size * by\n    return self.size"  # 5*3=15, not 8
-    )
-    correct = "def grow(self, by):\n    self.size += by\n    return self.size"
+    passes_agent_but_not_gate = "self.size = self.size * by\nreturn self.size"  # 5*3=15, not 8
+    correct = "self.size += by\nreturn self.size"
     agent_tests = (
         "from test_required_for import Box\n\n"
         "def test_grow():\n    assert Box(0).grow(0) == 0"  # true for both
