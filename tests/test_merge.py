@@ -75,6 +75,35 @@ METHOD_FORWARD_REF = dedent('''\
             ...
 ''')
 
+STACKED_METHODS = dedent('''\
+    from dataclasses import dataclass
+
+    from jiti import jiti
+
+
+    @dataclass
+    class Scale:
+        base: int
+
+        @property
+        @jiti
+        def doubled(self) -> int:
+            """Return base * 2."""
+            ...
+
+        @classmethod
+        @jiti
+        def one(cls) -> "Scale":
+            """Return a Scale with base 1."""
+            ...
+
+        @staticmethod
+        @jiti
+        def triple(x: int) -> int:
+            """Return x * 3."""
+            ...
+''')
+
 
 def test_inlines_body_and_removes_the_section(proj):
     module = proj.module("text", SLUGIFY)
@@ -176,6 +205,47 @@ def test_merge_method_preserves_sibling_methods(proj):
     assert "def step(self) -> int:" in source
     assert "self.count += 1" in source
     assert "@jiti" not in source
+
+
+def test_merge_preserves_descriptor_decorators_on_methods(proj):
+    module = proj.module("scale", STACKED_METHODS)
+    proj.generate(
+        module,
+        "Scale.doubled",
+        "def doubled(self) -> int:\n    return self.base * 2",
+        spec_hash=_descriptor_spec_hash(proj, module, "Scale.doubled"),
+    )
+    proj.generate(
+        module,
+        "Scale.one",
+        'def one(cls) -> "Scale":\n    return cls(1)',
+        spec_hash=_descriptor_spec_hash(proj, module, "Scale.one"),
+    )
+    proj.generate(
+        module,
+        "Scale.triple",
+        "def triple(x: int) -> int:\n    return x * 3",
+        spec_hash=_descriptor_spec_hash(proj, module, "Scale.triple"),
+    )
+
+    assert run_merge(proj.root, [module], merge_all=False, dry_run=False) == 0
+
+    source = proj.source_of(module).read_text()
+    assert "@jiti" not in source
+    assert "@property" in source
+    assert "@classmethod" in source
+    assert "@staticmethod" in source
+    assert "from jiti import jiti" not in source
+
+    import importlib  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    for cached in [n for n in sys.modules if n == module or n.startswith(f"{module}.")]:
+        del sys.modules[cached]
+    scale = importlib.import_module(module).Scale
+    assert scale(2).doubled == 4
+    assert scale.one().base == 1
+    assert scale.triple(3) == 9
 
 
 def test_dry_run_writes_nothing(proj, capsys):
@@ -348,3 +418,13 @@ def test_prune_drops_scratch_tests_instead_of_promoting(proj):
     assert "test_scratch" not in after
     assert "test_lowers" not in after
     assert "promoted agent tests" not in after
+
+
+def _descriptor_spec_hash(proj, module: str, qualname: str) -> str:
+    from jiti.cli.merge.source import resolve_wrapper  # noqa: PLC0415
+    from jiti.core.discovery import import_file  # noqa: PLC0415
+
+    import_file(proj.source_of(module))
+    wrapper = resolve_wrapper(module, qualname)
+    assert wrapper is not None
+    return wrapper.declaration().spec_hash
