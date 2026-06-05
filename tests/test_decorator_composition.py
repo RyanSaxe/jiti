@@ -16,7 +16,9 @@ from jiti.core.store import JitiStore
 
 
 _STATIC_CLIENT = ScriptedClient([])
-_STATIC_ENGINE = Engine(client=_STATIC_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_STATIC_ENGINE = Engine(
+    completion=_STATIC_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 class _StaticHost:
@@ -40,7 +42,9 @@ def test_staticmethod_composes_with_jiti():
 
 
 _CLASS_CLIENT = ScriptedClient([])
-_CLASS_ENGINE = Engine(client=_CLASS_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_CLASS_ENGINE = Engine(
+    completion=_CLASS_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 class _ClassHost:
@@ -69,7 +73,7 @@ def test_classmethod_composes_with_jiti():
 
 
 _PROP_CLIENT = ScriptedClient([])
-_PROP_ENGINE = Engine(client=_PROP_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_PROP_ENGINE = Engine(completion=_PROP_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
 
 
 class _PropHost:
@@ -124,7 +128,9 @@ def test_unwrap_finds_jiti_callable_through_classmethod_bound_method():
 
 
 _CACHE_CLIENT = ScriptedClient([])
-_CACHE_ENGINE = Engine(client=_CACHE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_CACHE_ENGINE = Engine(
+    completion=_CACHE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 @lru_cache(maxsize=8)

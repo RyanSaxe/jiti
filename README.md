@@ -78,10 +78,15 @@ The full runnable version (with a `Version` dataclass, more stubs, and a method)
 pip install jiti     # or: uv add jiti
 ```
 
-Needs Python 3.13+. Set `ANTHROPIC_API_KEY` to generate code. Generation defaults to
-Claude Sonnet 4.6 for cost; set `JITI_MODEL` to another supported Claude model when you
-want a different tradeoff. Running already-generated code needs nothing — no key, no
-network.
+Needs Python 3.13+. Generation uses LiteLLM and defaults to Claude Sonnet 4.6; set
+`ANTHROPIC_API_KEY` for the default model, or set `JITI_MODEL` to any LiteLLM model id
+and provide that provider's API key. Running already-generated code needs nothing — no
+key, no network.
+
+```bash
+ANTHROPIC_API_KEY=... python your_script.py
+OPENAI_API_KEY=... JITI_MODEL=openai/<model-id> python your_script.py
+```
 
 ## Stubs
 
@@ -187,10 +192,11 @@ with cascading across the call graph, in-process validation (ruff + ty + pytest)
 test-driven generation via `@jiti.required_for` (works on free functions and methods),
 a score-gated refactor pass, common decorator stacks (`@staticmethod`, `@classmethod`,
 `@property`, and `functools` wrappers), the edit/conflict lifecycle, and the `jiti` CLI
-(`status` / `merge` / `test` / `clear`). Anthropic only.
+(`status` / `merge` / `test` / `clear`). Anthropic, OpenAI, Gemini, and other model
+families are available through LiteLLM.
 
-Not yet: a pytest plugin, whole-class generation, multiple model providers, generation
-locking, and dependency-aware invalidation.
+Not yet: a pytest plugin, whole-class generation, generation locking, and
+dependency-aware invalidation.
 
 ## Inspiration
 

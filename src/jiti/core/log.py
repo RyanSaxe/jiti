@@ -120,7 +120,19 @@ def _usage(usage: Any, model: str) -> str:
 
 
 def _tokens(usage: Any, name: str) -> int:
-    return getattr(usage, name, 0) or 0
+    for candidate in _TOKEN_ALIASES.get(name, (name,)):
+        value = usage.get(candidate, 0) if isinstance(usage, dict) else getattr(usage, candidate, 0)
+        if value:
+            return int(value)
+    return 0
+
+
+_TOKEN_ALIASES = {
+    "input_tokens": ("input_tokens", "prompt_tokens"),
+    "output_tokens": ("output_tokens", "completion_tokens"),
+    "cache_creation_input_tokens": ("cache_creation_input_tokens",),
+    "cache_read_input_tokens": ("cache_read_input_tokens",),
+}
 
 
 def _k(count: int) -> str:

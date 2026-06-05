@@ -14,7 +14,7 @@ CLEAN = "return x * 2"
 
 
 def _engine(client: ScriptedClient, tmp_path: Path, **kwargs) -> Engine:
-    return Engine(client=client, store=JitiStore(tmp_path / ".jiti"), **kwargs)
+    return Engine(completion=client, store=JitiStore(tmp_path / ".jiti"), **kwargs)
 
 
 def test_low_quality_green_candidate_triggers_a_refactor_pass(tmp_path):

@@ -8,9 +8,11 @@ story and the workflow, start there.
 Pass an `Engine` to `@jiti(engine=...)` to override defaults:
 
 ```python
-from jiti import Engine, jiti
+from pathlib import Path
 
-@jiti(engine=Engine(quality_threshold=8))
+from jiti import Engine, JitiStore, jiti
+
+@jiti(engine=Engine(store=JitiStore(Path(".jiti")), quality_threshold=8))
 def slugify(text: str) -> str: ...
 ```
 
@@ -18,9 +20,8 @@ def slugify(text: str) -> str: ...
 
 | Parameter           | Default                  | Purpose                                                                 |
 | ------------------- | ------------------------ | ----------------------------------------------------------------------- |
-| `client`            | required                 | An `anthropic.Anthropic`-like object; only `.messages.create(...)` is used. |
 | `store`             | required                 | A `JitiStore` (the mirror at `.jiti/`).                                 |
-| `model`             | `claude-sonnet-4-6`      | Model id passed to `client.messages.create`.                            |
+| `model`             | `claude-sonnet-4-6`      | LiteLLM model id.                                                       |
 | `max_tokens`        | `8192`                   | Per-call cap.                                                           |
 | `max_turns`         | `40`                     | Agent loop limit before giving up.                                      |
 | `style`             | packaged `STYLE_GUIDE`   | Prose style guide injected into the system prompt.                      |
@@ -28,6 +29,24 @@ def slugify(text: str) -> str: ...
 | `quality_threshold` | `7`                      | Minimum score to accept a candidate; lower triggers a refactor pass.    |
 | `max_refactor`      | `1`                      | How many refactor passes to attempt before settling.                    |
 | `test_paths`        | `None`                   | Where to find `@jiti.required_for` gates. `None` scans the working tree; a tuple narrows it; `()` disables discovery. |
+| `completion`        | LiteLLM `completion`     | LiteLLM-compatible completion callable; tests can inject a fake.        |
+
+## Models
+
+jiti calls models through LiteLLM. The default is Anthropic Claude Sonnet 4.6, so set
+`ANTHROPIC_API_KEY` for the default path:
+
+```bash
+ANTHROPIC_API_KEY=... python your_script.py
+```
+
+Set `JITI_MODEL` to any LiteLLM model id to use another model family. LiteLLM reads the
+provider's usual environment variables:
+
+```bash
+OPENAI_API_KEY=... JITI_MODEL=openai/<model-id> python your_script.py
+GEMINI_API_KEY=... JITI_MODEL=gemini/<model-id> python your_script.py
+```
 
 ## Prose guide resolution
 
@@ -43,8 +62,8 @@ def slugify(text: str) -> str: ...
 
 | Variable            | Purpose                                                                  |
 | ------------------- | ------------------------------------------------------------------------ |
-| `ANTHROPIC_API_KEY` | Required to generate. Running cached code does not need it.              |
-| `JITI_MODEL`        | Supported Claude model id for generation; defaults to `claude-sonnet-4-6`. |
+| `ANTHROPIC_API_KEY` | Required to generate with the default model. Running cached code does not need it. |
+| `JITI_MODEL`        | Model id for generation; defaults to `claude-sonnet-4-6`.                |
 | `JITI_LOG`          | Log level — see [Logging](#logging). Unset means silent.                 |
 | `JITI_STYLE`        | Path to a local style guide; overrides the packaged default.             |
 | `JITI_TESTS`        | Path to a local test guide; overrides the packaged default.              |
@@ -71,9 +90,10 @@ jiti app.text.slugify turn 2 — 2.7s in=4.8k out=1.1k cache_read=3.6k ~$0.0918
 jiti committed app.text.slugify — 5.9s ~$0.1653
 ```
 
-Cost estimates are **labeled estimates, not billing-accurate**, and only appear for
-models with known pricing (currently `claude-opus-4-8`, `claude-sonnet-4-6`,
-`claude-haiku-4-5`). Unknown models log token counts without a dollar figure.
+Cost estimates are **labeled estimates, not billing-accurate**. jiti asks LiteLLM for
+the model's configured completion cost when the provider response includes usage data,
+then falls back to its local Claude price table for partial responses. Unknown models
+log token counts without a dollar figure.
 
 To route logs somewhere other than stderr, configure the `jiti` logger yourself before
 the first `@jiti` call — `configure()` only attaches its `StreamHandler` if none is
