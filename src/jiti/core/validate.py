@@ -12,11 +12,13 @@ functions, and the agent's experiments run against copies — see `tools.py`.)
 from __future__ import annotations
 
 import ast
+import asyncio
+import inspect
 import os
 import subprocess
 import sys
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,7 +218,7 @@ def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
     for gate in gates:
         try:
             if gate.test is not None:
-                gate.test()
+                run_test_callable(gate.test)
         except JitiError:
             raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
         except _TEST_FAILURES:
@@ -232,7 +234,7 @@ def _call_tests(namespace: dict[str, object]) -> Check:
             continue
         ran_any = True
         try:
-            cast("Callable[[], object]", value)()
+            run_test_callable(cast("Callable[[], object]", value))
         except JitiError:
             raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
         except _TEST_FAILURES:
@@ -240,6 +242,27 @@ def _call_tests(namespace: dict[str, object]) -> Check:
     if not ran_any:
         return Check("tests", ok=False, output="no test_* functions were defined")
     return Check("tests", ok=not failures, output=cap("\n\n".join(failures)))
+
+
+def run_test_callable(test: Callable[[], object]) -> None:
+    result = test()
+    if inspect.isawaitable(result):
+        _run_awaitable(result)
+
+
+def _run_awaitable(awaitable: Awaitable[object]) -> object:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_await_result(awaitable))
+    raise JitiError(
+        "async validation cannot run inside an active event loop; trigger async jiti "
+        "generation through the decorated async function so resolution can run off-thread."
+    )
+
+
+async def _await_result(awaitable: Awaitable[object]) -> object:
+    return await awaitable
 
 
 def _format(impl_file: Path) -> str:

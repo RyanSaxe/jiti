@@ -95,6 +95,10 @@ A `@jiti` function's body must be one of (see `src/jiti/core/declaration.py`):
 A real body raises `RealBodyError`. Comments inside the stub are kept and shown to the
 agent as hints.
 
+`async def` stubs are supported. The decorated wrapper is marked as coroutine-like for
+framework introspection, and the first async resolution runs in a worker thread so jiti's
+blocking generation and validation do not nest inside the caller's active event loop.
+
 > Strict type checkers (mypy, pyright, ty in strict mode) report `empty-body` for an
 > empty function with a non-`None` return annotation. Disable that rule for stubs or use
 > `raise NotImplementedError` instead.
@@ -169,7 +173,7 @@ Every candidate goes through (see `src/jiti/core/validate.py`):
 2. **ruff check** on the candidate file.
 3. **ty check** on the candidate file.
 4. **In-process tests** — `@jiti.required_for` gates plus the agent's own scratch tests,
-   each bound against the candidate.
+   each bound against the candidate. Async tests and gates are awaited.
 
 If any step fails, the agent sees the failure and iterates. The agent gets up to
 `max_turns` iterations and may submit multiple candidates; the first one to pass the
