@@ -8,7 +8,9 @@ bind: `instance.method(...)` runs with the instance as the first argument.
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import inspect
 import sys
 import types
 from collections.abc import Callable, Iterator
@@ -18,7 +20,7 @@ from typing import Any, cast, overload
 from jiti.agent.engine import Engine, default_engine
 from jiti.core.declaration import Declaration, Gate, analyze_body, gate_for, introspect
 from jiti.core.errors import JitiError
-from jiti.core.validate import CONTRACT
+from jiti.core.validate import CONTRACT, run_test_callable
 
 
 class _JitiCallable:
@@ -29,17 +31,30 @@ class _JitiCallable:
             raise JitiError("@jiti can only decorate plain functions and methods.")
         analyze_body(func)  # fail fast at decoration time if the body is a real implementation
         self._func: types.FunctionType = func
+        self._is_async = inspect.iscoroutinefunction(func)
         self._engine = engine
         self._owner: type | None = None
         self._impl: Callable[..., Any] | None = None
         self._gates: list[Gate] = []
         functools.update_wrapper(self, func)
+        if self._is_async:
+            inspect.markcoroutinefunction(self)
 
     def __set_name__(self, owner: type, name: str) -> None:
         self._owner = owner
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._is_async:
+            return self._call_async(args, kwargs)
         return self._resolve(args, kwargs)(*args, **kwargs)
+
+    async def _call_async(self, args: tuple[object, ...], kwargs: dict[str, object]) -> Any:
+        impl = (
+            await asyncio.to_thread(self._resolve, args, kwargs)
+            if self._impl is None
+            else self._impl
+        )
+        return await impl(*args, **kwargs)
 
     def __get__(self, instance: object, owner: type | None = None) -> Callable[..., Any]:
         # Class access (`Cls.method`) returns the wrapper unresolved — resolving here would
@@ -48,8 +63,12 @@ class _JitiCallable:
             return self
 
         def bound(*args: Any, **kwargs: Any) -> Any:
+            if self._is_async:
+                return self._call_async((instance, *args), kwargs)
             return self._resolve((instance, *args), kwargs)(instance, *args, **kwargs)
 
+        if self._is_async:
+            inspect.markcoroutinefunction(bound)
         return bound
 
     def declaration(self) -> Declaration:
@@ -212,7 +231,9 @@ def _jiti_test_runner(stub: types.FunctionType, target: _JitiCallable) -> Callab
     @functools.wraps(stub)
     def run(*args: Any, **kwargs: Any) -> Any:
         engine = target._engine or default_engine()
-        return engine.run_test(introspect(stub), target.declaration())()
+        return run_test_callable(
+            lambda: engine.run_test(introspect(stub), target.declaration())(*args, **kwargs)
+        )
 
     return run
 

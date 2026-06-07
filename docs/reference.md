@@ -14,13 +14,13 @@ from jiti import Engine, jiti
 def slugify(text: str) -> str: ...
 ```
 
-`Engine.__init__` parameters (see `src/jiti/engine.py`):
+`Engine.__init__` parameters (see `src/jiti/agent/engine.py`):
 
 | Parameter           | Default                  | Purpose                                                                 |
 | ------------------- | ------------------------ | ----------------------------------------------------------------------- |
 | `client`            | required                 | An `anthropic.Anthropic`-like object; only `.messages.create(...)` is used. |
 | `store`             | required                 | A `JitiStore` (the mirror at `.jiti/`).                                 |
-| `model`             | `claude-opus-4-7`        | Model id passed to `client.messages.create`.                            |
+| `model`             | `claude-sonnet-4-6`      | Model id passed to `client.messages.create`.                            |
 | `max_tokens`        | `8192`                   | Per-call cap.                                                           |
 | `max_turns`         | `40`                     | Agent loop limit before giving up.                                      |
 | `style`             | packaged `STYLE_GUIDE`   | Prose style guide injected into the system prompt.                      |
@@ -32,18 +32,19 @@ def slugify(text: str) -> str: ...
 ## Prose guide resolution
 
 `style` and `test_guide` resolve in this order — first hit wins (see
-`src/jiti/prompts/__init__.py`):
+`src/jiti/agent/prompts/__init__.py`):
 
 1. Explicit `Engine(style=..., test_guide=...)`.
 2. `JITI_STYLE` / `JITI_TESTS` env vars — paths to local markdown files.
 3. `jiti.style.md` / `jiti.tests.md` in the project root.
-4. Packaged defaults (`src/jiti/prompts/style.md`, `tests.md`).
+4. Packaged defaults (`src/jiti/agent/prompts/style.md`, `tests.md`).
 
 ## Environment variables
 
 | Variable            | Purpose                                                                  |
 | ------------------- | ------------------------------------------------------------------------ |
 | `ANTHROPIC_API_KEY` | Required to generate. Running cached code does not need it.              |
+| `JITI_MODEL`        | Supported Claude model id for generation; defaults to `claude-sonnet-4-6`. |
 | `JITI_LOG`          | Log level — see [Logging](#logging). Unset means silent.                 |
 | `JITI_STYLE`        | Path to a local style guide; overrides the packaged default.             |
 | `JITI_TESTS`        | Path to a local test guide; overrides the packaged default.              |
@@ -51,7 +52,7 @@ def slugify(text: str) -> str: ...
 ## Logging
 
 jiti is silent by default — its logger (`jiti`) attaches a `NullHandler` so downstream
-users see nothing. Set `JITI_LOG` to opt in (see `src/jiti/_log.py`):
+users see nothing. Set `JITI_LOG` to opt in (see `src/jiti/core/log.py`):
 
 | Value                 | Effect                                                         |
 | --------------------- | -------------------------------------------------------------- |
@@ -71,7 +72,7 @@ jiti committed app.text.slugify — 5.9s ~$0.1653
 ```
 
 Cost estimates are **labeled estimates, not billing-accurate**, and only appear for
-models with known pricing (currently `claude-opus-4-7`, `claude-sonnet-4-6`,
+models with known pricing (currently `claude-opus-4-8`, `claude-sonnet-4-6`,
 `claude-haiku-4-5`). Unknown models log token counts without a dollar figure.
 
 To route logs somewhere other than stderr, configure the `jiti` logger yourself before
@@ -85,7 +86,7 @@ logging.getLogger("jiti").addHandler(my_handler)
 
 ## Stub forms
 
-A `@jiti` function's body must be one of (see `src/jiti/declaration.py`):
+A `@jiti` function's body must be one of (see `src/jiti/core/declaration.py`):
 
 - `...` (ellipsis)
 - `pass`
@@ -93,6 +94,10 @@ A `@jiti` function's body must be one of (see `src/jiti/declaration.py`):
 
 A real body raises `RealBodyError`. Comments inside the stub are kept and shown to the
 agent as hints.
+
+`async def` stubs are supported. The decorated wrapper is marked as coroutine-like for
+framework introspection, and the first async resolution runs in a worker thread so jiti's
+blocking generation and validation do not nest inside the caller's active event loop.
 
 > Strict type checkers (mypy, pyright, ty in strict mode) report `empty-body` for an
 > empty function with a non-`None` return annotation. Disable that rule for stubs or use
@@ -118,12 +123,12 @@ removing the `@jiti` decorator.
 - `--dry-run` — print the plan; write nothing.
 - `--prune` — drop the agent's scratch tests instead of appending them to a user test file.
 
-Gating: merge refuses sections that have drifted from their source (regenerate first)
-and methods that carry stacked decorators (`@classmethod`, `@staticmethod`). After
-implementations land, test files are folded in — `@jiti.required_for` decorators are
-dropped from your user tests (and stub bodies spliced in from the mirror), and scratch
-tests are appended to whichever user test file already references the impl, or ejected
-into the project's test layout.
+Gating: merge refuses sections that have drifted from their source (regenerate first).
+Decorators stacked above `@jiti` (`@staticmethod`, `@classmethod`, `@property`, cache
+wrappers, etc.) are preserved while `@jiti` is removed. After implementations land, test
+files are folded in — `@jiti.required_for` decorators are dropped from your user tests
+(and stub bodies spliced in from the mirror), and scratch tests are appended to whichever
+user test file already references the impl, or ejected into the project's test layout.
 
 ### `jiti test prune [--dry-run]`
 
@@ -142,7 +147,7 @@ Delete the entire `.jiti/` mirror.
 
 ## The edit / conflict lifecycle
 
-`JitiStore` tracks two hashes per section (see `src/jiti/store.py`):
+`JitiStore` tracks two hashes per section (see `src/jiti/core/store.py`):
 
 - The **spec hash** — derived from the stub's signature, docstring, and gates.
 - The **content hash** — derived from the implementation body as written.
@@ -162,13 +167,13 @@ edited body.
 
 ## Validation pipeline
 
-Every candidate goes through (see `src/jiti/validate.py`):
+Every candidate goes through (see `src/jiti/core/validate.py`):
 
 1. **ruff format** on the candidate file.
 2. **ruff check** on the candidate file.
 3. **ty check** on the candidate file.
 4. **In-process tests** — `@jiti.required_for` gates plus the agent's own scratch tests,
-   each bound against the candidate.
+   each bound against the candidate. Async tests and gates are awaited.
 
 If any step fails, the agent sees the failure and iterates. The agent gets up to
 `max_turns` iterations and may submit multiple candidates; the first one to pass the

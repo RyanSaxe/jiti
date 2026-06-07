@@ -289,7 +289,7 @@ class _LazyAnthropic:
 def default_engine() -> Engine:
     """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
 
-    Honors the `JITI_MODEL` env var to pick a cheaper model than Opus when set.
+    Honors the `JITI_MODEL` env var to override the default model when set.
     """
     global _DEFAULT
     if _DEFAULT is None:

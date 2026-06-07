@@ -35,7 +35,7 @@ class Price(NamedTuple):
 # Approximate pricing (USD per million tokens) — a labeled estimate, NOT billing-accurate.
 # Update these as pricing changes; unknown models simply log token counts without a cost.
 _PRICES: dict[str, Price] = {
-    Model.OPUS_4_7: Price(input=15.0, output=75.0, cache_write=18.75, cache_read=1.5),
+    Model.OPUS_4_8: Price(input=5.0, output=25.0, cache_write=6.25, cache_read=0.5),
     Model.SONNET_4_6: Price(input=3.0, output=15.0, cache_write=3.75, cache_read=0.3),
     Model.HAIKU_4_5: Price(input=1.0, output=5.0, cache_write=1.25, cache_read=0.1),
 }

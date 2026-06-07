@@ -78,8 +78,10 @@ The full runnable version (with a `Version` dataclass, more stubs, and a method)
 pip install jiti     # or: uv add jiti
 ```
 
-Needs Python 3.13+. Set `ANTHROPIC_API_KEY` to generate code. Running already-generated
-code needs nothing — no key, no network.
+Needs Python 3.13+. Set `ANTHROPIC_API_KEY` to generate code. Generation defaults to
+Claude Sonnet 4.6 for cost; set `JITI_MODEL` to another supported Claude model when you
+want a different tradeoff. Running already-generated code needs nothing — no key, no
+network.
 
 ## Stubs
 
@@ -95,8 +97,9 @@ def parse_money(raw: str) -> Decimal:
     ...
 ```
 
-Methods work the same way — decorate the methods you want generated, use `self` freely
-(see `Version.bump` in `examples/semver/core.py`).
+Methods and `async def` functions work the same way — decorate the targets you want
+generated, use `self` freely on methods, and `await` async targets normally (see
+`Version.bump` in `examples/semver/core.py`).
 
 > Strict type checkers flag an empty body with a non-`None` return (`empty-body`). That's
 > your checker reacting to the stub, not jiti. Disable that rule or use `raise NotImplementedError`.
@@ -179,15 +182,15 @@ uv run pytest
 
 ## Status
 
-Today, jiti supports free functions and methods, lazy agentic generation with cascading
-across the call graph, in-process validation (ruff + ty + pytest), test-driven generation
-via `@jiti.required_for` (works on free functions and methods), a score-gated refactor
-pass, the edit/conflict lifecycle, and the `jiti` CLI (`status` / `merge` / `test` /
-`clear`). Anthropic only.
+Today, jiti supports sync and async free functions and methods, lazy agentic generation
+with cascading across the call graph, in-process validation (ruff + ty + pytest),
+test-driven generation via `@jiti.required_for` (works on free functions and methods),
+a score-gated refactor pass, common decorator stacks (`@staticmethod`, `@classmethod`,
+`@property`, and `functools` wrappers), the edit/conflict lifecycle, and the `jiti` CLI
+(`status` / `merge` / `test` / `clear`). Anthropic only.
 
-Not yet: `merge` of methods that carry stacked decorators (`@classmethod`,
-`@staticmethod`), a pytest plugin, whole-class generation, multiple model providers,
-and dependency-aware invalidation.
+Not yet: a pytest plugin, whole-class generation, multiple model providers, generation
+locking, and dependency-aware invalidation.
 
 ## Inspiration
 

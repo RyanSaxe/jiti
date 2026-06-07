@@ -13,12 +13,12 @@ ENV_VAR = "JITI_MODEL"
 class Model(StrEnum):
     """Anthropic model IDs jiti supports. Values are accepted as-is by the Anthropic SDK."""
 
-    OPUS_4_7 = "claude-opus-4-7"
+    OPUS_4_8 = "claude-opus-4-8"
     SONNET_4_6 = "claude-sonnet-4-6"
     HAIKU_4_5 = "claude-haiku-4-5"
 
 
-DEFAULT_MODEL = Model.OPUS_4_7
+DEFAULT_MODEL = Model.SONNET_4_6
 
 
 def resolve_default() -> Model:

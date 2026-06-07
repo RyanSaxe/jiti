@@ -37,9 +37,8 @@ def test_bump_increments_and_resets_lower_parts():
 
 
 # `Version.is_stable`, `Version.zero`, and `Version.is_well_formed` stack a descriptor
-# decorator above `@jiti`. Gates on those would re-enter the wrapper at validation time
-# (MethodPatch only handles plain methods, not staticmethod/classmethod/property), so
-# they're exercised by the demo path — first call triggers generation and caches.
+# decorator above `@jiti`. They're exercised by the demo path — first call triggers
+# generation and caches, then these post-generation tests verify the cached behavior.
 
 
 def test_is_stable_post_generation():
