@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.3.0 (2026-06-07)
+
+### Chores
+
+- Add uv dependency cooldown
+  ([`3bcd3d4`](https://github.com/RyanSaxe/jiti/commit/3bcd3d4bffa03ed8879b8fdcfc5f86e2e8978084))
+
+### Features
+
+- Route generation through litellm
+  ([`b0e851c`](https://github.com/RyanSaxe/jiti/commit/b0e851ca32c5d0324d13bca21f683d6a87160857))
+
+
 ## v1.2.0 (2026-06-07)
 
 ### Bug Fixes

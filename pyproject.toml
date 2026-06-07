@@ -1,6 +1,6 @@
 [project]
 name = "jiti"
-version = "1.2.0"
+version = "1.3.0"
 description = "Just In Time Implementation: declare a typed function or method by its interface and let an LLM write, validate, and cache a real implementation."
 readme = "README.md"
 authors = [
