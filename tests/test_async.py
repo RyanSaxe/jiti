@@ -30,7 +30,9 @@ def test_validate_awaits_async_agent_tests():
 
 
 _SHAPE_CLIENT = ScriptedClient([])
-_SHAPE_ENGINE = Engine(client=_SHAPE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_SHAPE_ENGINE = Engine(
+    completion=_SHAPE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 @jiti(engine=_SHAPE_ENGINE)
@@ -55,7 +57,7 @@ def test_async_wrappers_are_seen_as_coroutine_functions():
 
 
 _GEN_CLIENT = ScriptedClient([])
-_GEN_ENGINE = Engine(client=_GEN_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_GEN_ENGINE = Engine(completion=_GEN_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
 
 
 @jiti(engine=_GEN_ENGINE)
@@ -73,7 +75,7 @@ def test_async_function_generates_from_inside_a_running_event_loop():
 
 
 _GATE_CLIENT = ScriptedClient([])
-_GATE_ENGINE = Engine(client=_GATE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_GATE_ENGINE = Engine(completion=_GATE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
 
 
 @jiti(engine=_GATE_ENGINE)
@@ -99,7 +101,7 @@ def test_async_human_gate_forces_a_retry():
 
 
 _TDD_CLIENT = ScriptedClient([])
-_TDD_ENGINE = Engine(client=_TDD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_TDD_ENGINE = Engine(completion=_TDD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
 
 
 @jiti(engine=_TDD_ENGINE)

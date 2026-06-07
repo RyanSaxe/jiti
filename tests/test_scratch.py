@@ -21,7 +21,7 @@ def test_committed_agent_tests_are_scratch(tmp_path):
     body = "return x * 2"
     agent_tests = "def test_doubles():\n    assert f(2) == 4"
     client = ScriptedClient([submit("f", body, agent_tests, quality=9)])
-    engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
 
     @jiti(engine=engine)
     def f(x: int) -> int:

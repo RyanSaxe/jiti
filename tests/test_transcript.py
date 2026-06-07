@@ -48,6 +48,19 @@ def test_write_creates_parent_directories(tmp_path):
     assert nested.exists()
 
 
+def test_turn_accepts_openai_style_usage_names(tmp_path):
+    recorder = Recorder()
+    usage = SimpleNamespace(prompt_tokens=120, completion_tokens=45)
+
+    recorder.turn(1, 0.1, usage, 0.0, [])
+    path = tmp_path / "t.jsonl"
+    recorder.write(path)
+
+    event = json.loads(path.read_text().splitlines()[0])
+    assert event["usage"]["input_tokens"] == 120
+    assert event["usage"]["output_tokens"] == 45
+
+
 def test_transcript_path_mirrors_module_as_directories(tmp_path):
     path = transcript_path(tmp_path, "examples.semver.core", "parse")
 

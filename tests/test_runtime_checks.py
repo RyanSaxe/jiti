@@ -22,7 +22,7 @@ from jiti.core.store import JitiStore
 
 
 def _engine(tmp_path: Path, *responses: Response) -> Engine:
-    return Engine(client=ScriptedClient(list(responses)), store=JitiStore(tmp_path / ".jiti"))
+    return Engine(completion=ScriptedClient(list(responses)), store=JitiStore(tmp_path / ".jiti"))
 
 
 def slugify(text: str) -> str:
@@ -46,7 +46,9 @@ def test_bad_arg_type_to_a_jiti_function_raises_validation_error(tmp_path):
 
 
 _METHOD_CLIENT = ScriptedClient([])
-_METHOD_ENGINE = Engine(client=_METHOD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_METHOD_ENGINE = Engine(
+    completion=_METHOD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 class Doubler:

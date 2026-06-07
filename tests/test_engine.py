@@ -7,7 +7,7 @@ import pytest
 from fakes import ScriptedClient, submit
 
 from jiti import jiti
-from jiti.agent.engine import Engine, _LazyAnthropic
+from jiti.agent.engine import Engine
 from jiti.core.declaration import introspect
 from jiti.core.errors import GenerationCycleError
 from jiti.core.store import JitiStore
@@ -24,7 +24,7 @@ def slugify(text: str) -> str:
 
 def test_generates_commits_and_caches(tmp_path):
     client = ScriptedClient([submit("slugify", GOOD_BODY, TESTS)])
-    engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
 
     assert jiti(engine=engine)(slugify)("Hello World") == "hello-world"
     assert client.calls == 1  # stops on the passing submit — no wrap-up turn
@@ -38,14 +38,14 @@ def test_retries_until_validation_passes(tmp_path):
     client = ScriptedClient(
         [submit("slugify", BAD_BODY, TESTS), submit("slugify", GOOD_BODY, TESTS)]
     )
-    engine = Engine(client=client, store=JitiStore(tmp_path / ".jiti"))
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
 
     assert jiti(engine=engine)(slugify)("Hello World") == "hello-world"
     assert client.calls == 2
 
 
 def test_cycle_guard_raises(tmp_path):
-    engine = Engine(client=ScriptedClient([]), store=JitiStore(tmp_path / ".jiti"))
+    engine = Engine(completion=ScriptedClient([]), store=JitiStore(tmp_path / ".jiti"))
     declaration = introspect(slugify)
     engine._in_progress.add(declaration.key)
 
@@ -55,7 +55,7 @@ def test_cycle_guard_raises(tmp_path):
 
 _CASCADE_CLIENT = ScriptedClient([])
 _CASCADE_ENGINE = Engine(
-    client=_CASCADE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+    completion=_CASCADE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
 )
 
 
@@ -87,7 +87,9 @@ def test_cascade_generates_the_callee():
 
 
 _METHOD_CLIENT = ScriptedClient([])
-_METHOD_ENGINE = Engine(client=_METHOD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_METHOD_ENGINE = Engine(
+    completion=_METHOD_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
 
 
 class Counter:
@@ -109,11 +111,3 @@ def test_method_generation():
 
     assert Counter(10).add(5) == 15
     assert _METHOD_CLIENT.calls == 1
-
-
-def test_lazy_anthropic_defers_construction_until_first_use(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-    client = _LazyAnthropic()  # building the lazy client needs no key — only generation does
-
-    assert client._client is None  # the real Anthropic client isn't constructed yet

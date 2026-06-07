@@ -1,6 +1,6 @@
-"""The agentic generation engine: an in-process Anthropic tool-use loop, per `@jiti` call.
+"""The agentic generation engine: an in-process provider tool-use loop, per `@jiti` call.
 
-On a call that needs generation, the engine runs Claude with the in-process tools, lets it
+On a call that needs generation, the engine runs an LLM with the in-process tools, lets it
 inspect real values / explore / experiment / submit until validation is green, then commits.
 Generation cascades naturally: a candidate's in-process tests call other `@jiti` functions,
 whose wrappers re-enter this same (shared) engine. A cycle guard stops infinite recursion.
@@ -13,10 +13,9 @@ import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeGuard
 
-import anthropic
-
+from jiti.agent.llm import Completion, LiteLLMClient, ToolCall, tool_result
 from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
@@ -24,7 +23,7 @@ from jiti.core.declaration import CallStyle, ClassContext, Declaration, Gate, in
 from jiti.core.discovery import import_test_modules
 from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
-from jiti.core.models import DEFAULT_MODEL, Model, resolve_default
+from jiti.core.models import DEFAULT_MODEL, resolve_default
 from jiti.core.store import Action, JitiStore, scratch_rename
 from jiti.core.validate import RoutingTarget
 
@@ -38,14 +37,13 @@ DEFAULT_MAX_REFACTOR = 1
 class Engine:
     """Generates implementations via an agent loop and commits them to the store.
 
-    `client` is an `anthropic.Anthropic`-like object (only `.messages.create(...)` is used);
-    tests inject a fake. A single shared engine backs all `@jiti` functions so the cycle
-    guard and store stay consistent across a cascade.
+    `completion` is a LiteLLM-compatible callable; tests inject a fake. A single shared
+    engine backs all `@jiti` functions so the cycle guard and store stay consistent across
+    a cascade.
     """
 
-    client: Any
     store: JitiStore
-    model: Model = DEFAULT_MODEL
+    model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_turns: int = DEFAULT_MAX_TURNS
     style: str = STYLE_GUIDE
@@ -54,9 +52,14 @@ class Engine:
     max_refactor: int = DEFAULT_MAX_REFACTOR
     test_paths: tuple[str, ...] | None = None
     """Where to find gates: None scans the tree, a tuple narrows it, () disables discovery."""
+    completion: Completion | None = None
 
     _in_progress: set[str] = field(default_factory=set)
     _discovered: bool = field(default=False)
+    _llm: LiteLLMClient = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._llm = LiteLLMClient() if self.completion is None else LiteLLMClient(self.completion)
 
     def discover(self) -> None:
         """Import the project's test modules once so their gates register before generation."""
@@ -194,7 +197,7 @@ class Engine:
         refactors = 0
         for turn in range(1, self.max_turns + 1):
             started = perf_counter()
-            response = self.client.messages.create(
+            response = self._llm.complete(
                 model=self.model,
                 max_tokens=self.max_tokens,
                 system=system,
@@ -205,7 +208,7 @@ class Engine:
             key = context.declaration.key
             elapsed = perf_counter() - started
             log_llm_call(key, turn, depth, elapsed, usage, self.model)
-            spent = cost(self.model, usage) or 0.0
+            spent = response.cost if response.cost is not None else cost(self.model, usage) or 0.0
             total_cost += spent
             if context.recorder is not None:
                 context.recorder.turn(turn, elapsed, usage, spent, response.content)
@@ -255,46 +258,22 @@ def _refactor_nudge(quality: int, threshold: int) -> dict[str, Any]:
     }
 
 
-def _is_tool_use(block: Any) -> bool:
-    return getattr(block, "type", None) == "tool_use"
+def _is_tool_use(block: Any) -> TypeGuard[ToolCall]:
+    return isinstance(block, ToolCall)
 
 
-def _tool_result(context: CallContext, block: Any) -> dict[str, Any]:
-    return {
-        "type": "tool_result",
-        "tool_use_id": block.id,
-        "content": dispatch(context, block.name, block.input),
-    }
-
-
-class _LazyAnthropic:
-    """An Anthropic client that builds the real one on first use.
-
-    Constructing `anthropic.Anthropic()` requires an API key, but `default_engine()` runs on
-    every first `@jiti` call — including cached ones that never reach the model. Deferring the
-    construction to the first `messages` access keeps importing jiti and running committed code
-    key-free; only generation (which calls the model) needs `ANTHROPIC_API_KEY`.
-    """
-
-    def __init__(self) -> None:
-        self._client: anthropic.Anthropic | None = None
-
-    @property
-    def messages(self) -> Any:
-        if self._client is None:
-            self._client = anthropic.Anthropic()
-        return self._client.messages
+def _tool_result(context: CallContext, block: ToolCall) -> Any:
+    return tool_result(block, dispatch(context, block.name, block.input))
 
 
 def default_engine() -> Engine:
     """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
 
-    Honors the `JITI_MODEL` env var to override the default model when set.
+    Honors `JITI_MODEL` when set.
     """
     global _DEFAULT
     if _DEFAULT is None:
         _DEFAULT = Engine(
-            client=_LazyAnthropic(),
             store=JitiStore(Path.cwd() / ".jiti"),
             model=resolve_default(),
         )

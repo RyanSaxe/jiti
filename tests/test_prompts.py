@@ -50,22 +50,16 @@ def test_missing_env_var_path_raises(monkeypatch):
 
 
 class CapturingClient:
-    """Records the `system` argument of the first call, then returns a plain stop response."""
+    """Records the LiteLLM messages from the first call, then returns a plain stop response."""
 
     def __init__(self) -> None:
-        self.system: Any = None
+        self.messages: Any = None
 
-    @property
-    def messages(self) -> "CapturingClient":
-        return self
-
-    def create(self, **kwargs: Any) -> Any:
-        self.system = kwargs["system"]
-
-        class _Done:
-            content = [type("Block", (), {"type": "text", "text": "done"})()]
-
-        return _Done()
+    def __call__(self, **kwargs: Any) -> Any:
+        self.messages = kwargs["messages"]
+        message = type("Message", (), {"content": "done", "tool_calls": []})()
+        choice = type("Choice", (), {"message": message})()
+        return type("Done", (), {"choices": [choice], "usage": None})()
 
 
 def stub(text: str) -> str:
@@ -76,25 +70,33 @@ def stub(text: str) -> str:
 def _captured_system(*, style: str, test_guide: str) -> Any:
     client = CapturingClient()
     engine = Engine(
-        client=client,
+        completion=client,
         store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"),
         style=style,
         test_guide=test_guide,
     )
     # The capturing client never submits, so generation fails — but only after the first
-    # `messages.create`, by which point the system prompt is recorded.
+    # completion call, by which point the system prompt is recorded.
     with pytest.raises(GenerationError):
         engine.implement(introspect(stub), ("hi",), {})
-    return client.system
+    return _message_text(client.messages[0]["content"])
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, list):
+        return "\n\n".join(str(block.get("text", "")) for block in content)
+    return str(content)
 
 
 def test_style_and_test_guidance_are_injected_as_blocks():
     system = _captured_system(style="ZZZ-style-marker", test_guide="QQQ-test-marker")
 
-    texts = "".join(block["text"] for block in system)
-    assert "ZZZ-style-marker" in texts
-    assert "QQQ-test-marker" in texts
+    assert "ZZZ-style-marker" in system
+    assert "QQQ-test-marker" in system
 
 
 def test_empty_guides_add_no_extra_blocks():
-    assert len(_captured_system(style="  ", test_guide="")) == 1
+    system = _captured_system(style="  ", test_guide="")
+
+    assert "Follow this house style" not in system
+    assert "Follow this guidance when writing tests" not in system

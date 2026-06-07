@@ -60,7 +60,23 @@ def transcript_path(mirror_root: Path, module: str, name: str) -> Path:
 def _usage_dict(usage: Any) -> dict[str, int]:
     if usage is None:
         return {}
-    return {name: getattr(usage, name, 0) or 0 for name in _USAGE_FIELDS}
+    return {name: _usage_value(usage, name) for name in _USAGE_FIELDS}
+
+
+def _usage_value(usage: Any, name: str) -> int:
+    for candidate in _USAGE_ALIASES.get(name, (name,)):
+        value = usage.get(candidate, 0) if isinstance(usage, dict) else getattr(usage, candidate, 0)
+        if value:
+            return int(value)
+    return 0
+
+
+_USAGE_ALIASES = {
+    "input_tokens": ("input_tokens", "prompt_tokens"),
+    "output_tokens": ("output_tokens", "completion_tokens"),
+    "cache_creation_input_tokens": ("cache_creation_input_tokens",),
+    "cache_read_input_tokens": ("cache_read_input_tokens",),
+}
 
 
 def _extract_text(content: list[Any]) -> str:

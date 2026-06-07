@@ -11,7 +11,7 @@ from jiti.agent.engine import Engine
 from jiti.core.store import JitiStore
 
 _CLIENT = ScriptedClient([])
-_ENGINE = Engine(client=_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
+_ENGINE = Engine(completion=_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti"))
 
 
 @jiti(engine=_ENGINE)
