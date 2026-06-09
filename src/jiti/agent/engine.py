@@ -27,7 +27,14 @@ from jiti.agent.llm import (
 from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
-from jiti.core.declaration import CallStyle, ClassContext, Declaration, Gate, introspect
+from jiti.core.declaration import (
+    CallStyle,
+    ClassContext,
+    Declaration,
+    Gate,
+    UsedSymbol,
+    introspect,
+)
 from jiti.core.discovery import import_test_modules
 from jiti.core.errors import ConflictError, FrozenError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
@@ -380,6 +387,8 @@ def _task_prompt(declaration: Declaration) -> str:
         lines.append(f"Author hint:\n{declaration.hint}")
     if declaration.class_context is not None:
         lines.append(_class_section(declaration.class_context))
+    if declaration.uses:
+        lines.append(_uses_section(declaration.uses))
     symbols = ", ".join(declaration.available_symbols) or "(none)"
     lines.append(
         f"You may import these module-level symbols from `{declaration.module}`: {symbols}"
@@ -418,6 +427,18 @@ def _gate_section(gates: tuple[Gate, ...]) -> str | None:
     return (
         "These author tests are part of the definition of done — your implementation will be run "
         "against them and must pass:\n" + "\n\n".join(human)
+    )
+
+
+def _uses_section(uses: tuple[UsedSymbol, ...]) -> str:
+    entries = []
+    for symbol in uses:
+        shown = f"{symbol.name}{symbol.signature}" if symbol.signature else symbol.name
+        summary = f" — {symbol.summary}" if symbol.summary else ""
+        entries.append(f"  - {shown}{summary}  (import from `{symbol.module}`)")
+    return (
+        "Your implementation MUST use these symbols — do NOT re-implement their behavior "
+        "inline (validation rejects a candidate that never references them):\n" + "\n".join(entries)
     )
 
 

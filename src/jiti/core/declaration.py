@@ -70,6 +70,54 @@ class ClassContext:
 
 
 @dataclass(frozen=True)
+class UsedSymbol:
+    """A symbol the generated implementation must reference — from `@jiti(uses=[...])`.
+
+    Captured at decoration time so the prompt can show the symbol's signature and
+    summary, and so validation can verify the reference statically.
+    """
+
+    name: str
+    module: str
+    qualname: str
+    kind: Literal["callable", "class"]
+    signature: str
+    """`str(inspect.signature(...))`, or '' when the symbol isn't introspectable."""
+
+    summary: str
+    """First line of the symbol's docstring, shown in the task prompt."""
+
+
+def used_symbol(obj: object) -> UsedSymbol:
+    """Build a `UsedSymbol` from a callable or class. Anything else is a decoration error.
+
+    v1 scope is deliberately callables + classes: they carry `__name__`/`__module__`, so
+    the contract is type-checked at the call site (you pass the symbol, not a string).
+    Plain values (constants) lose their names when passed, so they can't be supported
+    this way — mention them in the docstring instead.
+    """
+    name = getattr(obj, "__name__", None)
+    if not (isinstance(obj, type) or callable(obj)) or not name:
+        raise JitiError(
+            "@jiti(uses=[...]) accepts callables and classes (symbols with a __name__); "
+            f"got {type(obj).__name__!r}. For constants, describe them in the docstring."
+        )
+    try:
+        signature = str(inspect.signature(obj))  # follows __wrapped__ on @jiti wrappers
+    except (ValueError, TypeError):
+        signature = ""
+    doc = inspect.getdoc(obj) or ""
+    return UsedSymbol(
+        name=name,
+        module=getattr(obj, "__module__", "") or "",
+        qualname=getattr(obj, "__qualname__", name),
+        kind="class" if isinstance(obj, type) else "callable",
+        signature=signature,
+        summary=doc.splitlines()[0] if doc else "",
+    )
+
+
+@dataclass(frozen=True)
 class Gate:
     """A test registered via `jiti.required_for` as part of a target's definition of done."""
 
@@ -105,6 +153,9 @@ class Declaration:
     (prompt, validate, merge) reads to decide the calling pattern."""
 
     gates: tuple[Gate, ...] = ()
+    uses: tuple[UsedSymbol, ...] = ()
+    """Symbols the implementation must reference (`@jiti(uses=[...])`) — prompted as a
+    MUST and verified statically at validation."""
 
     @property
     def body_mode(self) -> BodyMode:
@@ -122,7 +173,10 @@ class Declaration:
 
 
 def introspect(
-    func: types.FunctionType, owner: type | None = None, gates: tuple[Gate, ...] = ()
+    func: types.FunctionType,
+    owner: type | None = None,
+    gates: tuple[Gate, ...] = (),
+    uses: tuple[UsedSymbol, ...] = (),
 ) -> Declaration:
     """Build a `Declaration` from a stub function and (for methods) its owner class.
 
@@ -152,6 +206,7 @@ def introspect(
         def_line=_def_line_from_node(source, node),
         call_style=_call_style(cls, func.__name__, signature),
         gates=gates,
+        uses=uses,
     )
 
 
@@ -419,4 +474,7 @@ def _spec_hash(declaration: Declaration) -> str:
         parts.extend(f"{name}:{type_}" for name, type_ in declaration.class_context.attributes)
         parts.extend(f"{name}{sig}" for name, sig in declaration.class_context.methods)
     parts.extend(f"{gate.kind}:{gate.name}:{gate.spec}" for gate in declaration.gates)
+    # Identity only (not signature/doc): regeneration should trigger when the contract
+    # changes — which symbols must be used — not when a dependency's docstring drifts.
+    parts.extend(f"uses:{symbol.module}.{symbol.qualname}" for symbol in declaration.uses)
     return short_hash("\x00".join(parts))

@@ -211,6 +211,7 @@ class CallContext:
             gates=self.gates,
             routing_target=self.target,
             timeout=self.timeout,
+            uses=self.declaration.uses,
         )
         if not result.ok:
             return f"FAILED:\n{result.report}"

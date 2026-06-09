@@ -129,6 +129,27 @@ blocking generation and validation do not nest inside the caller's active event 
 > empty function with a non-`None` return annotation. Disable that rule for stubs or use
 > `raise NotImplementedError` instead.
 
+## Composition contracts (`uses=`)
+
+`@jiti(uses=[...])` declares symbols the generated implementation must use:
+
+```python
+@jiti(uses=[satisfies, sort_versions])
+def latest_matching(versions: list[str], spec: str) -> str | None: ...
+```
+
+- Accepts **callables and classes** — pass the symbols themselves, not strings, so the
+  reference is type-checked and refactor-safe. (Plain constants lose their names when
+  passed; describe those in the docstring instead.)
+- Each symbol's signature and docstring summary are injected into the task prompt as a
+  MUST-use instruction.
+- Validation adds a `uses` check: the candidate's AST must **reference** each symbol
+  (bare name, `module.attr`, or an import alias). Reference — not invocation — so
+  higher-order usage (`map(f, ...)`, `functools.partial(f, ...)`) counts. A candidate
+  that never references a declared symbol fails with feedback the agent can act on.
+- `uses=` joins the spec hash: editing the list regenerates the section.
+- Other `@jiti` stubs are valid targets — generation cascades as usual.
+
 ## CLI
 
 `jiti` ships a single command. `--root <path>` overrides the project root (defaults to
@@ -175,7 +196,7 @@ Delete the entire `.jiti/` mirror.
 
 `JitiStore` tracks two hashes per section (see `src/jiti/core/store.py`):
 
-- The **spec hash** — derived from the stub's signature, docstring, and gates.
+- The **spec hash** — derived from the stub's signature, docstring, gates, and `uses=` list.
 - The **content hash** — derived from the implementation body as written.
 
 When `@jiti` is called, the store resolves the section to one of five actions:
@@ -198,7 +219,8 @@ Every candidate goes through (see `src/jiti/core/validate.py`):
 1. **ruff format** on the candidate file.
 2. **ruff check** on the candidate file.
 3. **ty check** on the candidate file.
-4. **In-process tests** — `@jiti.required_for` gates plus the agent's own scratch tests,
+4. **uses check** — every `@jiti(uses=[...])` symbol must be referenced (static AST scan).
+5. **In-process tests** — `@jiti.required_for` gates plus the agent's own scratch tests,
    each bound against the candidate. Async tests and gates are awaited.
 
 Each in-process execution (a test, a gate, a `run_python`/`inspect` tool call) is bounded

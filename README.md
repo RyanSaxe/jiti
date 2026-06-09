@@ -72,6 +72,24 @@ dispatch.
 The full runnable version (with a `Version` dataclass, more stubs, and a method) lives in
 [`examples/semver/`](examples/semver/).
 
+### Composition contracts
+
+When the correct implementation of one piece *must* go through another, say so with
+`uses=` instead of hoping the docstring is persuasive:
+
+```python
+@jiti(uses=[satisfies, sort_versions])
+def latest_matching(versions: list[str], spec: str) -> str | None:
+    """Return the highest-precedence version satisfying `spec`, or None."""
+    ...
+```
+
+You pass the symbols themselves (functions or classes — type-checked at the call site,
+refactor-safe). The agent is told each one's signature and docstring as a MUST-use, and
+validation statically rejects any candidate that never references them — so jiti can't
+quietly re-implement `satisfies` inline and drift from your real one. Changing the
+`uses=` list regenerates, just like editing the docstring.
+
 ## Install
 
 ```bash

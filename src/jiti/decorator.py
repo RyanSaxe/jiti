@@ -14,12 +14,20 @@ import inspect
 import sys
 import threading
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, cast, overload
 
 from jiti.agent.engine import Engine, default_engine
-from jiti.core.declaration import Declaration, Gate, analyze_body, gate_for, introspect
+from jiti.core.declaration import (
+    Declaration,
+    Gate,
+    UsedSymbol,
+    analyze_body,
+    gate_for,
+    introspect,
+    used_symbol,
+)
 from jiti.core.errors import JitiError
 from jiti.core.validate import CONTRACT, run_test_callable
 
@@ -27,7 +35,12 @@ from jiti.core.validate import CONTRACT, run_test_callable
 class _JitiCallable:
     """Lazily resolves a stub to its generated implementation and dispatches to it."""
 
-    def __init__(self, func: Callable[..., Any], engine: Engine | None) -> None:
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        engine: Engine | None,
+        uses: tuple[object, ...] = (),
+    ) -> None:
         if not isinstance(func, types.FunctionType):
             raise JitiError("@jiti can only decorate plain functions and methods.")
         analyze_body(func)  # fail fast at decoration time if the body is a real implementation
@@ -37,6 +50,7 @@ class _JitiCallable:
         self._owner: type | None = None
         self._impl: Callable[..., Any] | None = None
         self._gates: list[Gate] = []
+        self._uses: tuple[UsedSymbol, ...] = tuple(used_symbol(item) for item in uses)
         # Reentrant so a generation cascade that re-enters this target on the same thread
         # falls through to the engine's cycle guard instead of deadlocking.
         self._resolve_lock = threading.RLock()
@@ -78,7 +92,7 @@ class _JitiCallable:
 
     def declaration(self) -> Declaration:
         """The canonical spec for this stub — engine and CLI build state from it."""
-        return introspect(self._func, self._owner, tuple(self._gates))
+        return introspect(self._func, self._owner, tuple(self._gates), uses=self._uses)
 
     def _resolve(self, args: tuple[object, ...], kwargs: dict[str, object]) -> Callable[..., Any]:
         # Double-checked lock: concurrent first calls (threads, or async tasks resolving via
@@ -172,19 +186,28 @@ class _Jiti:
 
     @overload
     def __call__[F: Callable[..., Any]](
-        self, *, engine: Engine | None = ...
+        self,
+        *,
+        engine: Engine | None = ...,
+        uses: Sequence[Callable[..., Any] | type] = ...,
     ) -> Callable[[F], F]: ...
 
     def __call__[F: Callable[..., Any]](
-        self, func: F | None = None, *, engine: Engine | None = None
+        self,
+        func: F | None = None,
+        *,
+        engine: Engine | None = None,
+        uses: Sequence[Callable[..., Any] | type] = (),
     ) -> F | Callable[[F], F]:
         """Declare a function or method by its interface; jiti generates the implementation.
 
         Use bare (`@jiti`) for the default shared engine, or `@jiti(engine=...)` to supply your
-        own (e.g. a custom Anthropic client or store).
+        own (e.g. a custom Anthropic client or store). `uses=[...]` declares symbols the
+        implementation MUST use — pass the callables/classes themselves; the agent is told
+        their signatures and validation rejects a candidate that never references them.
         """
         if func is None:
-            return lambda target: cast(F, _JitiCallable(target, engine))
+            return lambda target: cast(F, _JitiCallable(target, engine, tuple(uses)))
         return cast(F, _JitiCallable(func, engine))
 
     def required_for[F: Callable[..., Any]](self, target: Callable[..., Any]) -> Callable[[F], F]:
