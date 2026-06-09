@@ -9,6 +9,7 @@ whose wrappers re-enter this same (shared) engine. A cycle guard stops infinite 
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -269,18 +270,23 @@ def _tool_result(context: CallContext, block: ToolCall) -> Any:
 def default_engine() -> Engine:
     """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
 
-    Honors `JITI_MODEL` when set.
+    Honors `JITI_MODEL` when set. The singleton is built under a lock so concurrent first
+    callers share one Engine — without it, two threads could each construct their own,
+    losing cycle-guard coherence (each holds its own `_in_progress` set).
     """
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = Engine(
-            store=JitiStore(Path.cwd() / ".jiti"),
-            model=resolve_default(),
-        )
+        with _DEFAULT_LOCK:
+            if _DEFAULT is None:
+                _DEFAULT = Engine(
+                    store=JitiStore(Path.cwd() / ".jiti"),
+                    model=resolve_default(),
+                )
     return _DEFAULT
 
 
 _DEFAULT: Engine | None = None
+_DEFAULT_LOCK = threading.Lock()
 
 
 def _committed_tests(declaration: Declaration, tests: str) -> str:
