@@ -205,7 +205,12 @@ type-check only — no execution.
 ## Concurrency
 
 - **Running** generated code is fully safe — it's plain dispatch.
-- **Generating** does no locking. Warm the cache once single-threaded, then parallelize.
+- **Generating** is serialized per function within a process: concurrent first calls
+  (threads, or async tasks) share one generation — the losers block, then run the
+  winner's committed code. Cascades on the same thread still re-enter normally, so
+  genuine cycles raise `GenerationCycleError` rather than deadlocking.
+- **Across processes** there is no locking (e.g. `pytest-xdist` workers can race to
+  generate the same section). Warm the cache in one process first, then parallelize.
 - **Writes** are atomic — a reader never sees a half-written file.
 
 ## Exceptions

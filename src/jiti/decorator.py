@@ -12,6 +12,7 @@ import asyncio
 import functools
 import inspect
 import sys
+import threading
 import types
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -36,6 +37,9 @@ class _JitiCallable:
         self._owner: type | None = None
         self._impl: Callable[..., Any] | None = None
         self._gates: list[Gate] = []
+        # Reentrant so a generation cascade that re-enters this target on the same thread
+        # falls through to the engine's cycle guard instead of deadlocking.
+        self._resolve_lock = threading.RLock()
         functools.update_wrapper(self, func)
         if self._is_async:
             inspect.markcoroutinefunction(self)
@@ -76,10 +80,16 @@ class _JitiCallable:
         return introspect(self._func, self._owner, tuple(self._gates))
 
     def _resolve(self, args: tuple[object, ...], kwargs: dict[str, object]) -> Callable[..., Any]:
+        # Double-checked lock: concurrent first calls (threads, or async tasks resolving via
+        # to_thread) must not each run a generation — the losers wait, then use the winner's impl.
         if self._impl is None:
-            engine = self._engine or default_engine()
-            engine.discover()  # import test modules so `required_for` gates are registered first
-            self._impl = CONTRACT(engine.implement(self.declaration(), args, kwargs, target=self))
+            with self._resolve_lock:
+                if self._impl is None:
+                    engine = self._engine or default_engine()
+                    engine.discover()  # import test modules so gates are registered first
+                    self._impl = CONTRACT(
+                        engine.implement(self.declaration(), args, kwargs, target=self)
+                    )
         return self._impl
 
     @contextmanager

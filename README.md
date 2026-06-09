@@ -159,9 +159,11 @@ After `merge --all`, you have plain Python, no jiti dependency required. See
   regenerates; if you'd hand-edited that section, it surfaces a conflict instead.
 - **git is yours.** jiti only writes files into `.jiti/`. Commit it (so production runs
   cached code with no key) or gitignore it. jiti never runs git.
-- **Concurrency.** Running generated code is fully safe — it's plain dispatch. *Generating*
-  does no locking, so warm the cache once single-threaded, then parallelize. Writes are
-  atomic, so a reader never sees a half-written file.
+- **Concurrency.** Running generated code is fully safe — it's plain dispatch. Within a
+  process, concurrent first calls to the same function share one generation (the losers
+  wait, then run the winner's code). Across *processes* there is no locking — warm the
+  cache once, then parallelize. Writes are atomic, so a reader never sees a half-written
+  file.
 
 ## Where to go next
 
@@ -195,7 +197,7 @@ a score-gated refactor pass, common decorator stacks (`@staticmethod`, `@classme
 (`status` / `merge` / `test` / `clear`). Anthropic, OpenAI, Gemini, and other model
 families are available through LiteLLM.
 
-Not yet: a pytest plugin, whole-class generation, generation locking, and
+Not yet: a pytest plugin, whole-class generation, cross-process generation locking, and
 dependency-aware invalidation.
 
 ## Inspiration
