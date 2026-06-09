@@ -46,10 +46,19 @@ class LLMResponse:
 
 Completion = Callable[..., Any]
 
+DEFAULT_NUM_RETRIES = 3
+"""How many times litellm should retry a transient provider error (429, 5xx, timeout).
+A small positive default means a single blip doesn't bubble out of the user's @jiti call."""
+
 
 class LiteLLMClient:
-    def __init__(self, completion: Completion = litellm_completion) -> None:
+    def __init__(
+        self,
+        completion: Completion = litellm_completion,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+    ) -> None:
         self.completion = completion
+        self.num_retries = num_retries
 
     def complete(
         self,
@@ -69,6 +78,7 @@ class LiteLLMClient:
                 max_tokens=max_tokens,
                 messages=_messages(model, system, messages),
                 tools=_tools(tools),
+                num_retries=self.num_retries,
             )
         finally:
             heartbeat.llm_call_finished()

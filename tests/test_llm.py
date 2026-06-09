@@ -116,6 +116,47 @@ def test_tool_results_with_injected_text_become_tool_then_user_messages():
     ]
 
 
+def test_litellm_client_forwards_num_retries_to_completion():
+    """litellm retries transient errors (429, 5xx, network blips) when num_retries > 0.
+    The client must pass the configured value through so a single hiccup doesn't surface
+    out of the user's @jiti call."""
+    completion = CapturingCompletion()
+    client = LiteLLMClient(completion=completion, num_retries=5)
+
+    client.complete(model="claude-sonnet-4-6", max_tokens=1, system=[], tools=[], messages=[])
+
+    assert completion.kwargs is not None
+    assert completion.kwargs["num_retries"] == 5
+
+
+def test_litellm_client_defaults_num_retries_to_three():
+    """Sanity: don't ship retries-disabled by accident — the default must protect a bare
+    `Engine(...)` from a single transient blip."""
+    completion = CapturingCompletion()
+    client = LiteLLMClient(completion=completion)
+
+    client.complete(model="claude-sonnet-4-6", max_tokens=1, system=[], tools=[], messages=[])
+
+    assert completion.kwargs is not None
+    assert completion.kwargs["num_retries"] == 3
+
+
+def test_engine_forwards_provider_retries_through_to_completion(tmp_path):
+    """The wiring goes Engine(provider_retries=N) → LiteLLMClient(num_retries=N) → litellm."""
+    from jiti.agent.engine import Engine
+    from jiti.core.store import JitiStore
+
+    completion = CapturingCompletion()
+    Engine(
+        completion=completion,
+        store=JitiStore(tmp_path / ".jiti"),
+        provider_retries=7,
+    )._llm.complete(model="x", max_tokens=1, system=[], tools=[], messages=[])
+
+    assert completion.kwargs is not None
+    assert completion.kwargs["num_retries"] == 7
+
+
 def test_litellm_client_flattens_system_text_for_other_providers():
     completion = CapturingCompletion()
     client = LiteLLMClient(completion=completion)
