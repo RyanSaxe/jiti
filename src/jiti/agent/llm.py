@@ -10,6 +10,7 @@ from typing import Any
 from litellm import completion as litellm_completion
 from litellm import completion_cost, get_llm_provider
 
+from jiti.core import heartbeat
 
 @dataclass(frozen=True)
 class TextBlock:
@@ -59,12 +60,18 @@ class LiteLLMClient:
         tools: Sequence[dict[str, Any]],
         messages: Sequence[dict[str, Any]],
     ) -> LLMResponse:
-        response = self.completion(
-            model=model,
-            max_tokens=max_tokens,
-            messages=_messages(model, system, messages),
-            tools=_tools(tools),
-        )
+        # The heartbeat keeps the execution timeout from tripping on legitimate work:
+        # while this call is in flight, idle time is zero (see `core.heartbeat`).
+        heartbeat.llm_call_started()
+        try:
+            response = self.completion(
+                model=model,
+                max_tokens=max_tokens,
+                messages=_messages(model, system, messages),
+                tools=_tools(tools),
+            )
+        finally:
+            heartbeat.llm_call_finished()
         message = response.choices[0].message
         return LLMResponse(
             content=_content(message),

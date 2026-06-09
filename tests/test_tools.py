@@ -29,7 +29,7 @@ def test_run_python_times_out_instead_of_hanging_the_host():
         context, "run_python", {"code": "import time\nwhile True:\n    time.sleep(0.01)"}
     )
 
-    assert "still running after" in result
+    assert "no LLM activity" in result
 
 
 def test_run_python_does_not_mutate_the_callers_args():

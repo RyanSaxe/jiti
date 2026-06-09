@@ -25,12 +25,21 @@ from jiti.core.errors import ConflictError, GenerationCycleError, GenerationErro
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
 from jiti.core.models import DEFAULT_MODEL, resolve_default
 from jiti.core.store import Action, JitiStore, scratch_rename
-from jiti.core.validate import RoutingTarget
+from jiti.core.validate import DEFAULT_EXECUTION_TIMEOUT, RoutingTarget
 
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_TURNS = 40
 DEFAULT_QUALITY_THRESHOLD = 7
 DEFAULT_MAX_REFACTOR = 1
+
+
+@dataclass(frozen=True)
+class AgentRun:
+    """What one agent loop spent: total cost, wall time inside LLM calls, and call count."""
+
+    cost: float
+    llm_seconds: float
+    llm_calls: int
 
 
 @dataclass
@@ -52,6 +61,10 @@ class Engine:
     max_refactor: int = DEFAULT_MAX_REFACTOR
     test_paths: tuple[str, ...] | None = None
     """Where to find gates: None scans the tree, a tuple narrows it, () disables discovery."""
+    execution_timeout: float = DEFAULT_EXECUTION_TIMEOUT
+    """Max IDLE seconds (no LLM call in flight) for one in-process execution — a test,
+    gate, or tool experiment. Cascaded generation resets the clock on every model call,
+    so deep cascades run as long as they need; only a hung candidate trips this."""
     completion: Completion | None = None
 
     _in_progress: set[str] = field(default_factory=set)
@@ -111,10 +124,11 @@ class Engine:
                 kwargs,
                 import_path=_import_path(declaration),
                 gates=gates,
+                timeout=self.execution_timeout,
                 recorder=recorder,
                 target=target,
             )
-            total_cost = self._run_agent(
+            run = self._run_agent(
                 context,
                 self._system_blocks(),
                 _task_prompt(declaration),
@@ -128,8 +142,8 @@ class Engine:
                 )
             impl, tests = context.passing
             self.store.write(declaration, impl, _committed_tests(declaration, tests))
-            log_done(key, depth, perf_counter() - started, total_cost)
-            record_generation(total_cost)
+            log_done(key, depth, perf_counter() - started, run.cost, run.llm_seconds, run.llm_calls)
+            record_generation(run.cost)
         finally:
             recorder.write(transcript_path(self.store.root, declaration.module, declaration.name))
             self._in_progress.discard(key)
@@ -147,18 +161,25 @@ class Engine:
         started = perf_counter()
         recorder = Recorder()
         try:
-            context = CallContext(test, (), {}, import_path=_import_path(test), recorder=recorder)
+            context = CallContext(
+                test,
+                (),
+                {},
+                import_path=_import_path(test),
+                timeout=self.execution_timeout,
+                recorder=recorder,
+            )
             task = _test_task_prompt(test, target)
             # threshold=0 → no refactor pass for tests (red→green→refactor is for the impl).
-            cost_ = self._run_agent(
+            run = self._run_agent(
                 context, self._test_system_blocks(), task, TEST_TOOLS, threshold=0, max_refactor=0
             )
             if context.passing is None:
                 raise GenerationError(f"{key}: the agent finished without a passing test.")
             body, _ = context.passing
             self.store.write_test(test, body)
-            log_done(key, depth, perf_counter() - started, cost_)
-            record_generation(cost_)
+            log_done(key, depth, perf_counter() - started, run.cost, run.llm_seconds, run.llm_calls)
+            record_generation(run.cost)
         finally:
             recorder.write(transcript_path(self.store.root, test.module, test.name))
             self._in_progress.discard(key)
@@ -190,11 +211,13 @@ class Engine:
         *,
         threshold: int,
         max_refactor: int,
-    ) -> float:
+    ) -> AgentRun:
         depth = len(self._in_progress)
         messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
         total_cost = 0.0
+        llm_seconds = 0.0
         refactors = 0
+        turn = 0
         for turn in range(1, self.max_turns + 1):
             started = perf_counter()
             response = self._llm.complete(
@@ -207,6 +230,7 @@ class Engine:
             usage = getattr(response, "usage", None)
             key = context.declaration.key
             elapsed = perf_counter() - started
+            llm_seconds += elapsed
             log_llm_call(key, turn, depth, elapsed, usage, self.model)
             spent = response.cost if response.cost is not None else cost(self.model, usage) or 0.0
             total_cost += spent
@@ -215,15 +239,16 @@ class Engine:
             messages.append({"role": "assistant", "content": response.content})
             tool_uses = [block for block in response.content if _is_tool_use(block)]
             if not tool_uses:
-                return total_cost
+                return AgentRun(total_cost, llm_seconds, turn)
             results = [_tool_result(context, block) for block in tool_uses]
             if context.passing is not None:
                 if context.quality >= threshold or refactors >= max_refactor:
-                    return total_cost  # green and polished enough — skip the model's wrap-up turn
+                    # green and polished enough — skip the model's wrap-up turn
+                    return AgentRun(total_cost, llm_seconds, turn)
                 refactors += 1
                 results.append(_refactor_nudge(context.quality, threshold))
             messages.append({"role": "user", "content": results})
-        return total_cost
+        return AgentRun(total_cost, llm_seconds, turn)
 
     def _system_blocks(self) -> list[dict[str, Any]]:
         # Style and test guidance are separate cached blocks so jiti's mechanical rules stay

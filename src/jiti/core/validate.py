@@ -25,10 +25,12 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic
 from typing import Protocol, cast
 
 from pydantic import ConfigDict, validate_call
 
+from jiti.core import heartbeat
 from jiti.core.declaration import Gate
 from jiti.core.errors import JitiError
 
@@ -42,14 +44,17 @@ CONTRACT = validate_call(
 RUFF = (sys.executable, "-m", "ruff")
 TY = (sys.executable, "-m", "ty")
 
-# Generous by design: a test can legitimately trigger a cascaded generation (its target
-# calls another @jiti stub), which takes real wall-clock time. The bound exists to stop
-# a runaway candidate (`while True:`) from hanging the host process forever.
-DEFAULT_EXECUTION_TIMEOUT = 300.0
+# IDLE seconds, not total: the clock only ticks while no LLM call is in flight (see
+# `core.heartbeat`). A test that cascades through ten generations runs as long as it
+# needs — every model call resets the clock. The bound exists to stop a runaway
+# candidate (`while True:`) from hanging the host process forever.
+DEFAULT_EXECUTION_TIMEOUT = 120.0
+
+_POLL_SECONDS = 1.0
 
 
 class ExecutionTimeout(Exception):
-    """In-process execution of agent code outlived its time budget and was abandoned.
+    """In-process execution of agent code sat idle past its budget and was abandoned.
 
     Deliberately NOT a `JitiError`: gate/test runners re-raise `JitiError` as cascade
     control flow, but a timeout is a candidate failure the agent should see and fix.
@@ -59,9 +64,12 @@ class ExecutionTimeout(Exception):
 def call_bounded[T](fn: Callable[[], T], timeout: float, what: str) -> T:
     """Run `fn` on a worker thread, returning its result or re-raising its exception.
 
-    If `fn` outlives `timeout` seconds, raise `ExecutionTimeout`. Python cannot kill a
-    running thread, so the worker is a daemon and is abandoned — a leak, but a bounded
-    one, and strictly better than hanging the caller's process forever.
+    Raise `ExecutionTimeout` when `fn` goes `timeout` seconds with **no LLM activity**
+    in the process — legitimate long work in jiti is always an LLM call (a cascaded
+    generation inside a test, a slow model turn), so idle time is the signal that
+    distinguishes a hung candidate from real work. Python cannot kill a running thread,
+    so the worker is a daemon and is abandoned — a leak, but a bounded one, and strictly
+    better than hanging the caller's process forever.
     """
     outcome: list[tuple[bool, object]] = []
 
@@ -73,12 +81,16 @@ def call_bounded[T](fn: Callable[[], T], timeout: float, what: str) -> T:
 
     worker = threading.Thread(target=run, daemon=True, name=f"jiti-{what}")
     worker.start()
-    worker.join(timeout)
-    if worker.is_alive():
-        raise ExecutionTimeout(
-            f"{what} was still running after {timeout:.0f}s and has been abandoned — "
-            "likely an infinite loop or a hang; make it finish promptly."
-        )
+    started = monotonic()
+    while True:
+        worker.join(min(_POLL_SECONDS, timeout))
+        if not worker.is_alive():
+            break
+        if heartbeat.idle_for(started) > timeout:
+            raise ExecutionTimeout(
+                f"{what} ran {timeout:.0f}s with no LLM activity and has been abandoned — "
+                "likely an infinite loop or a hang; make it finish promptly."
+            )
     ok, value = outcome[0]
     if ok:
         return cast("T", value)
