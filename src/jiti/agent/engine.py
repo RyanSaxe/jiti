@@ -263,7 +263,7 @@ def _is_tool_use(block: Any) -> TypeGuard[ToolCall]:
 
 
 def _tool_result(context: CallContext, block: ToolCall) -> Any:
-    return tool_result(block, dispatch(context, block.name, block.input))
+    return tool_result(block, dispatch(context, block.name, block.input, block.parse_error))
 
 
 def default_engine() -> Engine:
@@ -298,8 +298,14 @@ def _import_path(declaration: Declaration) -> tuple[str, ...]:
     file = getattr(module, "__file__", None)
     if file is None:
         return ()
+    # `__init__.py` represents a package, so the file lives one directory deeper than
+    # a same-named regular module would. Compensate so the returned sys.path root makes
+    # `import declaration.module` resolve from there.
+    path = Path(file).resolve()
     depth = len(declaration.module.split("."))
-    return (str(Path(file).resolve().parents[depth - 1]),)
+    if path.name == "__init__.py":
+        depth += 1
+    return (str(path.parents[depth - 1]),)
 
 
 def _task_prompt(declaration: Declaration) -> str:

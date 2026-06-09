@@ -10,8 +10,6 @@ from typing import Any
 from litellm import completion as litellm_completion
 from litellm import completion_cost, get_llm_provider
 
-from jiti.core.errors import JitiError
-
 
 @dataclass(frozen=True)
 class TextBlock:
@@ -25,6 +23,10 @@ class ToolCall:
     name: str
     input: dict[str, Any]
     type: str = "tool_use"
+    parse_error: str | None = None
+    """Set when the model's tool-call JSON was malformed. The dispatcher surfaces this as
+    a tool error the agent can read and fix on its next turn, instead of letting it raise
+    out of the user's `@jiti` call."""
 
 
 @dataclass(frozen=True)
@@ -166,25 +168,36 @@ def _content(message: Any) -> list[TextBlock | ToolCall]:
     for call in _field(message, "tool_calls") or ():
         function = _field(call, "function")
         raw_args = _field(function, "arguments") if function is not None else "{}"
+        parsed, parse_error = _json_object(raw_args)
         content.append(
             ToolCall(
                 id=str(_field(call, "id")),
                 name=str(_field(function, "name")),
-                input=_json_object(raw_args),
+                input=parsed,
+                parse_error=parse_error,
             )
         )
     return content
 
 
-def _json_object(raw: Any) -> dict[str, Any]:
+def _json_object(raw: Any) -> tuple[dict[str, Any], str | None]:
+    """Parse a tool-call arguments payload. Returns `(input, parse_error)` — never raises.
+
+    A malformed payload commonly comes from a truncated `max_tokens` response or a model
+    bug; the agent needs to see the error as a tool failure and retry, not have it bubble
+    out of the user's call.
+    """
     if isinstance(raw, dict):
-        return raw
+        return raw, None
     if raw in (None, ""):
-        return {}
-    loaded = json.loads(str(raw))
+        return {}, None
+    try:
+        loaded = json.loads(str(raw))
+    except json.JSONDecodeError as error:
+        return {}, f"tool arguments were not valid JSON: {error}"
     if not isinstance(loaded, dict):
-        raise JitiError("tool call arguments must decode to a JSON object.")
-    return loaded
+        return {}, "tool arguments must decode to a JSON object."
+    return loaded, None
 
 
 def _field(value: Any, name: str) -> Any:

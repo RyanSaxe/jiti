@@ -233,8 +233,18 @@ class CallContext:
         return namespace
 
 
-def dispatch(context: CallContext, name: str, tool_input: dict[str, Any]) -> str:
-    """Run a tool by name with the model-supplied input, returning text (errors included)."""
+def dispatch(
+    context: CallContext, name: str, tool_input: dict[str, Any], parse_error: str | None = None
+) -> str:
+    """Run a tool by name with the model-supplied input, returning text (errors included).
+
+    `parse_error` short-circuits with a tool-failure message when the model's JSON
+    arguments were malformed — that way a truncated or malformed tool call comes back to
+    the agent as something to fix on the next turn, not as an exception out of the user's
+    `@jiti` call.
+    """
+    if parse_error is not None:
+        return f"FAILED:\n{parse_error}\nResend the tool call with valid JSON arguments."
     handler = getattr(context, name, None)
     if name.startswith("_") or not callable(handler):
         return f"unknown tool: {name}"

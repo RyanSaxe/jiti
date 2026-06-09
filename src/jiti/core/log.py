@@ -21,6 +21,8 @@ logger.addHandler(logging.NullHandler())
 _session_generations: int = 0
 _session_cost: float = 0.0
 _summary_registered: bool = False
+_own_handler: logging.StreamHandler | None = None
+"""The handler `configure()` attached, if any — the one the atexit summary may repoint."""
 
 
 class Price(NamedTuple):
@@ -51,12 +53,13 @@ def configure() -> None:
         if setting in {"1", "true", "yes"}
         else getattr(logging, setting.upper(), logging.INFO)
     )
+    global _own_handler, _summary_registered
     if not any(isinstance(handler, logging.StreamHandler) for handler in logger.handlers):
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("jiti %(message)s"))
         logger.addHandler(handler)
+        _own_handler = handler
     logger.setLevel(level)
-    global _summary_registered
     if not _summary_registered:
         atexit.register(_log_session_summary)
         _summary_registered = True
@@ -72,6 +75,15 @@ def record_generation(spent: float) -> None:
 def _log_session_summary() -> None:
     if _session_generations == 0:
         return
+    if sys.stderr is None or getattr(sys.stderr, "closed", False):
+        return  # interpreter teardown already closed stderr — nowhere left to write
+    if _own_handler is not None:
+        # By atexit our handler's stream may be dead in ways `closed` doesn't reveal —
+        # pytest's capture file, for example, gets torn down at session end. We own this
+        # handler, so swap its stream directly instead of via `setStream`, which flushes
+        # the old (closed) stream and raises. User-attached handlers are theirs; we never
+        # touch their streams.
+        _own_handler.stream = sys.stderr
     suffix = f" ~${_session_cost:.4f}" if _session_cost else ""
     label = "generation" if _session_generations == 1 else "generations"
     logger.info("session: %d %s%s", _session_generations, label, suffix)
