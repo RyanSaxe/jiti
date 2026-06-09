@@ -17,10 +17,12 @@ import inspect
 import os
 import subprocess
 import sys
+import threading
 import traceback
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol, cast
@@ -39,6 +41,48 @@ CONTRACT = validate_call(
 # Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
 RUFF = (sys.executable, "-m", "ruff")
 TY = (sys.executable, "-m", "ty")
+
+# Generous by design: a test can legitimately trigger a cascaded generation (its target
+# calls another @jiti stub), which takes real wall-clock time. The bound exists to stop
+# a runaway candidate (`while True:`) from hanging the host process forever.
+DEFAULT_EXECUTION_TIMEOUT = 300.0
+
+
+class ExecutionTimeout(Exception):
+    """In-process execution of agent code outlived its time budget and was abandoned.
+
+    Deliberately NOT a `JitiError`: gate/test runners re-raise `JitiError` as cascade
+    control flow, but a timeout is a candidate failure the agent should see and fix.
+    """
+
+
+def call_bounded[T](fn: Callable[[], T], timeout: float, what: str) -> T:
+    """Run `fn` on a worker thread, returning its result or re-raising its exception.
+
+    If `fn` outlives `timeout` seconds, raise `ExecutionTimeout`. Python cannot kill a
+    running thread, so the worker is a daemon and is abandoned — a leak, but a bounded
+    one, and strictly better than hanging the caller's process forever.
+    """
+    outcome: list[tuple[bool, object]] = []
+
+    def run() -> None:
+        try:
+            outcome.append((True, fn()))
+        except BaseException as error:  # re-raised in the caller below
+            outcome.append((False, error))
+
+    worker = threading.Thread(target=run, daemon=True, name=f"jiti-{what}")
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise ExecutionTimeout(
+            f"{what} was still running after {timeout:.0f}s and has been abandoned — "
+            "likely an infinite loop or a hang; make it finish promptly."
+        )
+    ok, value = outcome[0]
+    if ok:
+        return cast("T", value)
+    raise cast("BaseException", value)
 
 
 def _test_failures() -> tuple[type[BaseException], ...]:
@@ -101,6 +145,7 @@ def validate(
     gates: Sequence[Gate] = (),
     routing_target: RoutingTarget | None = None,
     execute: bool = True,
+    timeout: float = DEFAULT_EXECUTION_TIMEOUT,
 ) -> ValidationResult:
     """Lint, type-check, and (unless `execute` is False) run a candidate's tests.
 
@@ -127,7 +172,9 @@ def validate(
             *_ty_on_tests(workdir, formatted, test_source, import_path, execute=execute),
         )
         tests = (
-            _run_tests(formatted, test_source, name or "", gates, routing_target) if execute else ()
+            _run_tests(formatted, test_source, name or "", gates, routing_target, timeout)
+            if execute
+            else ()
         )
         checks = (*lint, *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
@@ -188,6 +235,7 @@ def _run_tests(
     name: str,
     gates: Sequence[Gate],
     routing_target: RoutingTarget | None,
+    timeout: float,
 ) -> tuple[Check, ...]:
     namespace: dict[str, object] = {}
     try:
@@ -205,28 +253,30 @@ def _run_tests(
         else nullcontext()
     )
     with routing:
-        tests = _call_tests(namespace)
+        tests = _call_tests(namespace, timeout)
         if not gates:
             return (tests,)
-        return (tests, _run_gates(contracted, gates))
+        return (tests, _run_gates(contracted, gates, timeout))
 
 
-def _run_gates(candidate: object, gates: Sequence[Gate]) -> Check:
+def _run_gates(candidate: object, gates: Sequence[Gate], timeout: float) -> Check:
     if not callable(candidate):
         return Check("gates", ok=False, output="the implementation did not define the target.")
     failures: list[str] = []
     for gate in gates:
         try:
             if gate.test is not None:
-                run_test_callable(gate.test)
+                call_bounded(partial(run_test_callable, gate.test), timeout, gate.name)
         except JitiError:
             raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
+        except ExecutionTimeout as error:
+            failures.append(f"{gate.name}:\n{error}")
         except _TEST_FAILURES:
             failures.append(f"{gate.name}:\n{traceback.format_exc()}")
     return Check("gates", ok=not failures, output=cap("\n\n".join(failures)))
 
 
-def _call_tests(namespace: dict[str, object]) -> Check:
+def _call_tests(namespace: dict[str, object], timeout: float) -> Check:
     failures: list[str] = []
     ran_any = False
     for name, value in namespace.items():
@@ -234,9 +284,12 @@ def _call_tests(namespace: dict[str, object]) -> Check:
             continue
         ran_any = True
         try:
-            run_test_callable(cast("Callable[[], object]", value))
+            test = cast("Callable[[], object]", value)
+            call_bounded(partial(run_test_callable, test), timeout, name)
         except JitiError:
             raise  # a cascade's control-flow error (e.g. a cycle) must not look like a failure
+        except ExecutionTimeout as error:
+            failures.append(f"{name}:\n{error}")
         except _TEST_FAILURES:
             failures.append(f"{name}:\n{traceback.format_exc()}")
     if not ran_any:

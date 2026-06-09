@@ -23,7 +23,13 @@ from jiti.agent.transcript import Recorder
 from jiti.core.declaration import Declaration, Gate, splice
 from jiti.core.errors import JitiError
 from jiti.core.log import logger
-from jiti.core.validate import RoutingTarget, cap, validate
+from jiti.core.validate import (
+    DEFAULT_EXECUTION_TIMEOUT,
+    RoutingTarget,
+    call_bounded,
+    cap,
+    validate,
+)
 
 _RG_INSTALL_HINT = (
     "jiti's `grep` tool requires `rg` (ripgrep) on PATH. Install:\n"
@@ -140,6 +146,8 @@ class CallContext:
     kwargs: dict[str, object]
     import_path: tuple[str, ...] = ()
     gates: tuple[Gate, ...] = ()
+    timeout: float = DEFAULT_EXECUTION_TIMEOUT
+    """Wall-clock bound on each in-process execution (a test, gate, or tool experiment)."""
     passing: tuple[str, str] | None = None
     quality: int = 10
     """The last passing candidate's self-reported quality; the engine loop reads it for refactor."""
@@ -151,13 +159,18 @@ class CallContext:
     `obj.method(...)`) short-circuits to the candidate instead of re-entering generation."""
 
     def inspect(self, expr: str) -> str:
-        value = eval(expr, {**self._module_globals(), **self._bound_args()})
+        namespace = {**self._module_globals(), **self._bound_args()}
+        value = call_bounded(lambda: eval(expr, namespace), self.timeout, "inspect")
         return f"{type(value).__name__}: {cap(repr(value))}"
 
     def run_python(self, code: str) -> str:
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
-            exec(code, self._experiment_namespace())
+
+        def experiment() -> None:
+            with redirect_stdout(buffer):
+                exec(code, self._experiment_namespace())
+
+        call_bounded(experiment, self.timeout, "run_python")
         return cap(buffer.getvalue()) or "(no output)"
 
     def read_file(self, path: str) -> str:
@@ -197,6 +210,7 @@ class CallContext:
             name=self.declaration.name,
             gates=self.gates,
             routing_target=self.target,
+            timeout=self.timeout,
         )
         if not result.ok:
             return f"FAILED:\n{result.report}"
