@@ -20,13 +20,15 @@ class Response:
 
 
 class ScriptedClient:
-    """Returns canned LiteLLM-shaped responses in order."""
+    """Returns canned LiteLLM-shaped responses in order; records each call's kwargs."""
 
     def __init__(self, script: list[Response]) -> None:
         self.script = script
         self.calls = 0
+        self.requests: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> Any:
+        self.requests.append(kwargs)
         response = self.script[self.calls]
         self.calls += 1
         return _litellm_response(response)

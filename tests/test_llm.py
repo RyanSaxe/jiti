@@ -90,6 +90,32 @@ def test_litellm_client_translates_tools_messages_and_tool_calls():
     assert response.content == [ToolCall("call-1", "submit", {"body": "return x"})]
 
 
+def test_tool_results_with_injected_text_become_tool_then_user_messages():
+    """Engine guidance (the refactor nudge) rides along with tool results — the wire format
+    must emit the tool replies first, then the guidance as a plain user message."""
+    completion = CapturingCompletion()
+    client = LiteLLMClient(completion=completion)
+
+    client.complete(
+        model="claude-sonnet-4-6",
+        max_tokens=123,
+        system=[],
+        tools=[],
+        messages=[
+            {
+                "role": "user",
+                "content": [ToolResult("call-0", "PASSED"), TextBlock("Refactor and resubmit.")],
+            },
+        ],
+    )
+
+    assert completion.kwargs is not None
+    assert completion.kwargs["messages"] == [
+        {"role": "tool", "tool_call_id": "call-0", "content": "PASSED"},
+        {"role": "user", "content": "Refactor and resubmit."},
+    ]
+
+
 def test_litellm_client_flattens_system_text_for_other_providers():
     completion = CapturingCompletion()
     client = LiteLLMClient(completion=completion)

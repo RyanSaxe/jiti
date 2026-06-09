@@ -84,11 +84,16 @@ def _messages(
     for message in messages:
         role = str(message["role"])
         content = message["content"]
-        if _is_tool_result_list(content):
+        if _is_tool_turn(content):
             out.extend(
-                {"role": "tool", "tool_call_id": result.tool_use_id, "content": result.content}
-                for result in content
+                {"role": "tool", "tool_call_id": item.tool_use_id, "content": item.content}
+                for item in content
+                if isinstance(item, ToolResult)
             )
+            # Engine-injected guidance (e.g. the refactor nudge) rides along with tool results;
+            # OpenAI-format providers need it as a separate user message after the tool replies.
+            if text := "\n\n".join(item.text for item in content if isinstance(item, TextBlock)):
+                out.append({"role": "user", "content": text})
         elif role == "assistant" and isinstance(content, list):
             out.append(_assistant_message(content))
         else:
@@ -124,8 +129,13 @@ def _uses_anthropic_cache_control(model: str) -> bool:
     return provider == "anthropic"
 
 
-def _is_tool_result_list(content: Any) -> bool:
-    return isinstance(content, list) and all(isinstance(item, ToolResult) for item in content)
+def _is_tool_turn(content: Any) -> bool:
+    """A tool-results turn: ToolResults plus optional engine-injected TextBlocks."""
+    return (
+        isinstance(content, list)
+        and any(isinstance(item, ToolResult) for item in content)
+        and all(isinstance(item, ToolResult | TextBlock) for item in content)
+    )
 
 
 def _assistant_message(content: Sequence[TextBlock | ToolCall]) -> dict[str, Any]:
