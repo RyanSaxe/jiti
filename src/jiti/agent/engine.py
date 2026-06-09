@@ -22,9 +22,9 @@ from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
 from jiti.core.declaration import CallStyle, ClassContext, Declaration, Gate, introspect
 from jiti.core.discovery import import_test_modules
-from jiti.core.errors import ConflictError, GenerationCycleError, GenerationError
+from jiti.core.errors import ConflictError, FrozenError, GenerationCycleError, GenerationError
 from jiti.core.log import cost, log_done, log_llm_call, log_start, record_generation
-from jiti.core.models import DEFAULT_MODEL, resolve_default
+from jiti.core.models import DEFAULT_MODEL, resolve_default, resolve_frozen
 from jiti.core.store import Action, JitiStore, scratch_rename
 from jiti.core.validate import DEFAULT_EXECUTION_TIMEOUT, RoutingTarget
 
@@ -66,6 +66,10 @@ class Engine:
     """Max IDLE seconds (no LLM call in flight) for one in-process execution — a test,
     gate, or tool experiment. Cascaded generation resets the clock on every model call,
     so deep cascades run as long as they need; only a hung candidate trips this."""
+    frozen: bool = False
+    """Refuse to generate. A cache miss raises `FrozenError` instead of calling the LLM —
+    use in deployments where only committed code should run. The default engine also honors
+    `JITI_FROZEN=1` (env wins if both are off, an explicit `frozen=True` always freezes)."""
     completion: Completion | None = None
 
     _in_progress: set[str] = field(default_factory=set)
@@ -82,6 +86,16 @@ class Engine:
         self._discovered = True
         import_test_modules(self.test_paths)
 
+    def _require_unfrozen(self, key: str, action: Action) -> None:
+        if not self.frozen:
+            return
+        verb = "generated" if action is Action.GENERATE else "regenerated (spec changed)"
+        raise FrozenError(
+            f"{key} needs to be {verb}, but the engine is frozen. Generate it in "
+            "development (unset JITI_FROZEN) and commit `.jiti/`, or run `jiti merge` "
+            "before the freeze."
+        )
+
     def implement(
         self,
         declaration: Declaration,
@@ -97,6 +111,7 @@ class Engine:
                 "has since changed. Reconcile them before running."
             )
         if resolution.action in (Action.GENERATE, Action.REGENERATE):
+            self._require_unfrozen(declaration.key, resolution.action)
             self._generate(declaration, args, kwargs, target)
         return self.store.load(declaration)
 
@@ -153,6 +168,7 @@ class Engine:
         """Generate a jiti-test body from `target`'s interface (TDD), validated by ruff + ty."""
         if (section := self.store.read_test_section(test)) and section.spec_hash == test.spec_hash:
             return
+        self._require_unfrozen(test.key, Action.GENERATE)
         key = test.key
         if key in self._in_progress:
             raise GenerationCycleError(f"generation cycle: {key} is needed to generate itself.")
@@ -292,9 +308,10 @@ def _tool_result(context: CallContext, block: ToolCall) -> Any:
 def default_engine() -> Engine:
     """The shared engine backing bare `@jiti` (built lazily so importing jiti needs no key).
 
-    Honors `JITI_MODEL` when set. The singleton is built under a lock so concurrent first
-    callers share one Engine — without it, two threads could each construct their own,
-    losing cycle-guard coherence (each holds its own `_in_progress` set).
+    Honors `JITI_MODEL` and `JITI_FROZEN` when set. The singleton is built under a lock
+    so concurrent first callers share one Engine — without it, two threads could each
+    construct their own, losing cycle-guard coherence (each holds its own `_in_progress`
+    set).
     """
     global _DEFAULT
     if _DEFAULT is None:
@@ -303,6 +320,7 @@ def default_engine() -> Engine:
                 _DEFAULT = Engine(
                     store=JitiStore(Path.cwd() / ".jiti"),
                     model=resolve_default(),
+                    frozen=resolve_frozen(),
                 )
     return _DEFAULT
 

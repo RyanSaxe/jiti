@@ -14,6 +14,15 @@ class RealBodyError(JitiError):
     """
 
 
+class FrozenError(JitiError):
+    """Generation was required but the engine is frozen.
+
+    Frozen mode (`JITI_FROZEN=1` or `Engine(frozen=True)`) makes cache misses loud:
+    production should run only committed code. Generate in development, commit `.jiti/`
+    (or `jiti merge`), then freeze the deployment.
+    """
+
+
 class GenerationError(JitiError):
     """The agent failed to produce an implementation that passes validation."""
 
