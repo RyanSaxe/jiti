@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v1.5.0 (2026-06-10)
+
+### Features
+
+- @jiti(uses=[...]) — declare symbols the implementation must use
+  ([#15](https://github.com/RyanSaxe/jiti/pull/15),
+  [`86b2474`](https://github.com/RyanSaxe/jiti/commit/86b24740b4d195c5d0403613f4c25c09de9abc8d))
+
+
 ## v1.4.1 (2026-06-10)
 
 ### Bug Fixes
