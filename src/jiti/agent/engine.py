@@ -16,7 +16,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, TypeGuard
 
-from jiti.agent.llm import Completion, LiteLLMClient, TextBlock, ToolCall, tool_result
+from jiti.agent.llm import (
+    DEFAULT_NUM_RETRIES,
+    Completion,
+    LiteLLMClient,
+    TextBlock,
+    ToolCall,
+    tool_result,
+)
 from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
@@ -70,6 +77,10 @@ class Engine:
     """Refuse to generate. A cache miss raises `FrozenError` instead of calling the LLM —
     use in deployments where only committed code should run. The default engine also honors
     `JITI_FROZEN=1` (env wins if both are off, an explicit `frozen=True` always freezes)."""
+    provider_retries: int = DEFAULT_NUM_RETRIES
+    """How many times litellm retries a transient provider error (429, 5xx, network blip)
+    on each turn before giving up. Set to 0 to disable; the default lets a single hiccup
+    pass without bubbling out of the user's `@jiti` call."""
     completion: Completion | None = None
 
     _in_progress: set[str] = field(default_factory=set)
@@ -77,7 +88,10 @@ class Engine:
     _llm: LiteLLMClient = field(init=False)
 
     def __post_init__(self) -> None:
-        self._llm = LiteLLMClient() if self.completion is None else LiteLLMClient(self.completion)
+        if self.completion is None:
+            self._llm = LiteLLMClient(num_retries=self.provider_retries)
+        else:
+            self._llm = LiteLLMClient(self.completion, num_retries=self.provider_retries)
 
     def discover(self) -> None:
         """Import the project's test modules once so their gates register before generation."""
