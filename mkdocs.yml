@@ -1,0 +1,92 @@
+site_name: jiti
+site_description: >-
+  Just In Time Implementation — declare a typed interface and let an LLM write,
+  validate, and cache a real implementation you keep.
+site_url: https://ryansaxe.com/jiti/
+repo_url: https://github.com/RyanSaxe/jiti
+repo_name: RyanSaxe/jiti
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Concepts: concepts.md
+  - Guides: guides.md
+  - Reference: reference.md
+  - API: api.md
+  - Internals: internals/
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - scripts/gen_api_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings:
+      handlers:
+        python:
+          inventories:
+            - https://docs.python.org/3/objects.inv
+          options:
+            # --- signatures: typed, code-fenced, cross-linked ---
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            line_length: 100
+            # --- source: collapsible code block under each object ---
+            show_source: true
+            # --- hierarchy & scannability ---
+            show_root_heading: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            group_by_category: true
+            show_category_heading: true
+            docstring_section_style: table
+            docstring_style: google
+
+extra_css:
+  - css/mkdocstrings.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/RyanSaxe/jiti
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/jiti/

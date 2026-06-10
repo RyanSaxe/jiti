@@ -1,6 +1,6 @@
 # jiti reference
 
-The flat reference for everything the [README](../README.md) doesn't spell out. For the
+The flat reference for everything the [overview](index.md) doesn't spell out. For the
 story and the workflow, start there.
 
 ## `Engine` configuration

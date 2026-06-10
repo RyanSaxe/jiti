@@ -1,0 +1,58 @@
+name: Docs
+
+# Build the MkDocs site on every PR that touches it (strict — broken links fail), and
+# deploy to GitHub Pages on push to main. Served at https://ryansaxe.com/jiti/ (project
+# sites inherit the user site's custom domain as a path).
+
+on:
+  push:
+    branches: [main]
+    paths: [docs/**, mkdocs.yml, src/**, scripts/gen_api_pages.py, .github/workflows/docs.yml]
+  pull_request:
+    paths: [docs/**, mkdocs.yml, scripts/gen_api_pages.py, .github/workflows/docs.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies (docs group)
+        run: uv sync --group docs
+
+      - name: Build (strict)
+        run: uv run mkdocs build --strict
+
+      - name: Upload site artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

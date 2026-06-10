@@ -29,6 +29,7 @@ jiti = "jiti.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/RyanSaxe/jiti"
+Documentation = "https://ryansaxe.com/jiti/"
 Repository = "https://github.com/RyanSaxe/jiti"
 Issues = "https://github.com/RyanSaxe/jiti/issues"
 
@@ -42,9 +43,19 @@ dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.0.0",
 ]
+docs = [
+    "mkdocs-gen-files>=0.6.1",
+    "mkdocs-literate-nav>=0.6.3",
+    "mkdocs-material>=9.7.6",
+    "mkdocs-section-index>=0.3.12",
+    "mkdocstrings[python]>=1.0.4",
+]
 
 [tool.uv]
 exclude-newer = "7 days"
+# docs tooling is part of the dev environment: ty type-checks scripts/gen_api_pages.py
+# (which imports mkdocs_gen_files), so every sync needs the docs group present.
+default-groups = ["dev", "docs"]
 
 [tool.ruff]
 target-version = "py313"
