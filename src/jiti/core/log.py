@@ -110,9 +110,20 @@ def log_llm_call(key: str, turn: int, depth: int, seconds: float, usage: Any, mo
     logger.info("%s%s turn %d — %.1fs%s", _indent(depth), key, turn, seconds, _usage(usage, model))
 
 
-def log_done(key: str, depth: int, seconds: float, total_cost: float | None) -> None:
-    suffix = f" ~${total_cost:.4f}" if total_cost else ""
-    logger.info("%scommitted %s — %.1fs%s", _indent(depth), key, seconds, suffix)
+def log_done(
+    key: str,
+    depth: int,
+    seconds: float,
+    total_cost: float | None,
+    llm_seconds: float = 0.0,
+    llm_calls: int = 0,
+) -> None:
+    cost_suffix = f" ~${total_cost:.4f}" if total_cost else ""
+    llm_suffix = ""
+    if llm_calls:
+        label = "call" if llm_calls == 1 else "calls"
+        llm_suffix = f" (llm {llm_seconds:.1f}s across {llm_calls} {label})"
+    logger.info("%scommitted %s — %.1fs%s%s", _indent(depth), key, seconds, llm_suffix, cost_suffix)
 
 
 def _usage(usage: Any, model: str) -> str:

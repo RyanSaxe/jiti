@@ -29,6 +29,7 @@ def slugify(text: str) -> str: ...
 | `quality_threshold` | `7`                      | Minimum score to accept a candidate; lower triggers a refactor pass.    |
 | `max_refactor`      | `1`                      | How many refactor passes to attempt before settling.                    |
 | `test_paths`        | `None`                   | Where to find `@jiti.required_for` gates. `None` scans the working tree; a tuple narrows it; `()` disables discovery. |
+| `execution_timeout` | `120.0`                  | Max **idle** seconds (no LLM call in flight) per in-process execution — a test, gate, or tool experiment. Cascaded generation resets the clock on every model call; only a hung candidate trips it. |
 | `completion`        | LiteLLM `completion`     | LiteLLM-compatible completion callable; tests can inject a fake.        |
 
 ## Models
@@ -87,8 +88,11 @@ token usage, and an approximate USD cost:
 jiti generating app.text.slugify
 jiti app.text.slugify turn 1 — 3.2s in=4.1k out=0.8k cache_read=2.0k ~$0.0735
 jiti app.text.slugify turn 2 — 2.7s in=4.8k out=1.1k cache_read=3.6k ~$0.0918
-jiti committed app.text.slugify — 5.9s ~$0.1653
+jiti committed app.text.slugify — 6.4s (llm 5.9s across 2 calls) ~$0.1653
 ```
+
+The committed line splits total wall time from time spent inside LLM calls, so a slow
+generation is immediately attributable to the model or to validation.
 
 Cost estimates are **labeled estimates, not billing-accurate**. jiti asks LiteLLM for
 the model's configured completion cost when the provider response includes usage data,
@@ -194,6 +198,13 @@ Every candidate goes through (see `src/jiti/core/validate.py`):
 3. **ty check** on the candidate file.
 4. **In-process tests** — `@jiti.required_for` gates plus the agent's own scratch tests,
    each bound against the candidate. Async tests and gates are awaited.
+
+Each in-process execution (a test, a gate, a `run_python`/`inspect` tool call) is bounded
+by `execution_timeout` — measured as **idle time**: the clock freezes while any LLM call
+is in flight, so a test that legitimately cascades through nested generations runs as
+long as it needs, while a runaway `while True:` candidate is abandoned and reported as a
+failing check the agent can fix. (Python can't kill a thread, so the abandoned worker
+leaks — bounded, and strictly better than hanging your process.)
 
 If any step fails, the agent sees the failure and iterates. The agent gets up to
 `max_turns` iterations and may submit multiple candidates; the first one to pass the

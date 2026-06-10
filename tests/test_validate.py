@@ -75,6 +75,19 @@ def test_ty_on_tests_skips_cleanly_when_candidate_exposes_no_public_names():
     assert result.ok
 
 
+def test_a_hanging_test_times_out_as_a_failure_instead_of_hanging_the_host():
+    """A runaway candidate test (`while True`) must surface as a failing check the agent
+    can fix — not block the host process forever. The clock is IDLE time: no LLM call in
+    flight (see test_heartbeat.py for the keep-alive side)."""
+    hanging = "def test_loop():\n    import time\n    while True:\n        time.sleep(0.01)"
+
+    result = validate(CORRECT, hanging, timeout=0.2)
+
+    assert not result.ok
+    assert "[tests]" in result.report
+    assert "no LLM activity" in result.report
+
+
 def test_runtime_contract_catches_return_lies_that_evade_static_checks():
     """An impl that uses `cast` to lie about its return type slips past ty but is caught
     at test-run time by the runtime contract wrap. This pins that the validation pipeline
