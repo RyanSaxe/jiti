@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.3.3 (2026-06-10)
+
+### Bug Fixes
+
+- Bound in-process test and tool execution by wall-clock timeout
+  ([#10](https://github.com/RyanSaxe/jiti/pull/10),
+  [`e8d930e`](https://github.com/RyanSaxe/jiti/commit/e8d930ee356437668b1c3811ed2e87b1f321b2c0))
+
+- Measure execution timeout as LLM-idle time, not wall clock
+  ([#10](https://github.com/RyanSaxe/jiti/pull/10),
+  [`e8d930e`](https://github.com/RyanSaxe/jiti/commit/e8d930ee356437668b1c3811ed2e87b1f321b2c0))
+
+
 ## v1.3.2 (2026-06-10)
 
 ### Bug Fixes
