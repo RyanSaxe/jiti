@@ -31,7 +31,7 @@ from typing import Protocol, cast
 from pydantic import ConfigDict, validate_call
 
 from jiti.core import heartbeat
-from jiti.core.declaration import Gate
+from jiti.core.declaration import Gate, UsedSymbol
 from jiti.core.errors import JitiError
 
 # strict: no silent coercion of bad-typed args. validate_return: catches type-lying impls.
@@ -158,6 +158,7 @@ def validate(
     routing_target: RoutingTarget | None = None,
     execute: bool = True,
     timeout: float = DEFAULT_EXECUTION_TIMEOUT,
+    uses: Sequence[UsedSymbol] = (),
 ) -> ValidationResult:
     """Lint, type-check, and (unless `execute` is False) run a candidate's tests.
 
@@ -188,8 +189,55 @@ def validate(
             if execute
             else ()
         )
-        checks = (*lint, *tests)
+        checks = (*lint, *_uses_check(formatted, uses), *tests)
     return ValidationResult(checks=checks, impl_source=formatted)
+
+
+def _uses_check(impl_source: str, uses: Sequence[UsedSymbol]) -> tuple[Check, ...]:
+    """Statically verify the candidate references every `@jiti(uses=[...])` symbol.
+
+    Reference, not invocation: `map(satisfies, ...)`, `partial(satisfies, ...)`, and plain
+    calls all reference the name, so this is robust where call-site matching is brittle.
+    Runtime spying would actually be weaker — it only proves a call happened on the branch
+    the validation inputs exercised. An import alone doesn't count as a reference (and the
+    format pass strips unused imports anyway), so a dead `from m import x` can't satisfy it.
+    """
+    if not uses:
+        return ()
+    referenced = _referenced_names(impl_source)
+    missing = [symbol for symbol in uses if symbol.name not in referenced]
+    if not missing:
+        return (Check("uses", ok=True, output=""),)
+    output = "\n".join(
+        f"the implementation must use `{symbol.name}` (from {symbol.module}) "
+        "but never references it — do not re-implement its behavior inline."
+        for symbol in missing
+    )
+    return (Check("uses", ok=False, output=output),)
+
+
+def _referenced_names(source: str) -> set[str]:
+    """Names the source references: bare `Name`s, attribute attrs (`module.name`), and
+    `from m import x as y` aliases expanded back to their original names."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()  # the ruff check reports the syntax error; nothing to claim here
+    names: set[str] = set()
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+    for asname, original in aliases.items():
+        if asname in names:
+            names.add(original)
+    return names
 
 
 def _ty_on_tests(
