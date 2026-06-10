@@ -44,11 +44,28 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          inventories:
+            - https://docs.python.org/3/objects.inv
           options:
-            show_source: false
+            # --- signatures: typed, code-fenced, cross-linked ---
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            line_length: 100
+            # --- source: collapsible code block under each object ---
+            show_source: true
+            # --- hierarchy & scannability ---
             show_root_heading: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
             members_order: source
+            group_by_category: true
+            show_category_heading: true
+            docstring_section_style: table
             docstring_style: google
+
+extra_css:
+  - css/mkdocstrings.css
 
 markdown_extensions:
   - admonition

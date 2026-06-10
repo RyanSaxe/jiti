@@ -1,0 +1,40 @@
+/* Colored kind-badges for API symbols (class / method / attribute / function / module),
+   shown in headings and the table of contents. Palette follows the mkdocstrings docs,
+   with a light and dark variant matching the Material color schemes. */
+
+[data-md-color-scheme="default"] {
+  --doc-symbol-parameter-fg-color: #df50af;
+  --doc-symbol-attribute-fg-color: #953800;
+  --doc-symbol-function-fg-color: #8250df;
+  --doc-symbol-method-fg-color: #8250df;
+  --doc-symbol-class-fg-color: #0550ae;
+  --doc-symbol-module-fg-color: #5cad0f;
+
+  --doc-symbol-parameter-bg-color: #df50af1a;
+  --doc-symbol-attribute-bg-color: #9538001a;
+  --doc-symbol-function-bg-color: #8250df1a;
+  --doc-symbol-method-bg-color: #8250df1a;
+  --doc-symbol-class-bg-color: #0550ae1a;
+  --doc-symbol-module-bg-color: #5cad0f1a;
+}
+
+[data-md-color-scheme="slate"] {
+  --doc-symbol-parameter-fg-color: #ffa8cc;
+  --doc-symbol-attribute-fg-color: #ffa657;
+  --doc-symbol-function-fg-color: #d2a8ff;
+  --doc-symbol-method-fg-color: #d2a8ff;
+  --doc-symbol-class-fg-color: #79c0ff;
+  --doc-symbol-module-fg-color: #baff79;
+
+  --doc-symbol-parameter-bg-color: #ffa8cc1a;
+  --doc-symbol-attribute-bg-color: #ffa6571a;
+  --doc-symbol-function-bg-color: #d2a8ff1a;
+  --doc-symbol-method-bg-color: #d2a8ff1a;
+  --doc-symbol-class-bg-color: #79c0ff1a;
+  --doc-symbol-module-bg-color: #baff791a;
+}
+
+/* Give the code-fenced signatures a touch more presence. */
+.doc-signature {
+  border-left: 3px solid var(--md-accent-fg-color);
+}
