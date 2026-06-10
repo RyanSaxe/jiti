@@ -29,7 +29,7 @@ jiti = "jiti.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/RyanSaxe/jiti"
-Documentation = "https://ryansaxe.com/jiti/"
+Documentation = "https://ryansaxe.github.io/jiti/"
 Repository = "https://github.com/RyanSaxe/jiti"
 Issues = "https://github.com/RyanSaxe/jiti/issues"
 

@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml/badge.svg)](https://github.com/RyanSaxe/jiti/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/jiti.svg)](https://pypi.org/project/jiti/)
+[![Docs](https://img.shields.io/badge/docs-ryansaxe.github.io%2Fjiti-blue)](https://ryansaxe.github.io/jiti/)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -167,8 +168,9 @@ jiti merge app.text.slugify  # inline one function into its source
 jiti merge --all             # graduate the entire project
 ```
 
-After `merge --all`, you have plain Python, no jiti dependency required. See
-[`docs/reference.md`](docs/reference.md) for the full CLI and configuration surface.
+After `merge --all`, you have plain Python, no jiti dependency required. See the
+[reference](https://ryansaxe.github.io/jiti/reference/) for the full CLI and
+configuration surface.
 
 ## A few things worth knowing
 
@@ -189,9 +191,10 @@ After `merge --all`, you have plain Python, no jiti dependency required. See
 
 ## Where to go next
 
+- [Documentation](https://ryansaxe.github.io/jiti/) — concepts, guides, the full
+  reference, and an auto-generated API tour.
 - [`examples/semver/`](examples/semver/) — a runnable interface-first walkthrough: stubs,
   a graph, tests, and the `merge` graduation.
-- [`docs/reference.md`](docs/reference.md) — every `Engine` knob, env var, and CLI flag.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Development

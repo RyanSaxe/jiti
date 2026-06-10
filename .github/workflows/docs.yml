@@ -1,8 +1,9 @@
 name: Docs
 
 # Build the MkDocs site on every PR that touches it (strict — broken links fail), and
-# deploy to GitHub Pages on push to main. Served at https://ryansaxe.com/jiti/ (project
-# sites inherit the user site's custom domain as a path).
+# deploy to GitHub Pages on push to main. Served at https://ryansaxe.github.io/jiti/
+# (the account has no user site, so project sites live at the github.io default; a
+# per-repo custom domain like jiti.ryansaxe.com could be added later via DNS + CNAME).
 
 on:
   push:
