@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v1.3.1 (2026-06-10)
+
+### Bug Fixes
+
+- Refactor-nudge no longer corrupts the tool-result message
+  ([#8](https://github.com/RyanSaxe/jiti/pull/8),
+  [`e4f0688`](https://github.com/RyanSaxe/jiti/commit/e4f06884d2ac71bcc5bd14fcaaf36c4df08ff482))
+
+
 ## v1.3.0 (2026-06-07)
 
 ### Chores
