@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.4.1 (2026-06-10)
+
+### Bug Fixes
+
+- Retry transient provider errors via litellm num_retries
+  ([#14](https://github.com/RyanSaxe/jiti/pull/14),
+  [`311594b`](https://github.com/RyanSaxe/jiti/commit/311594bd80ab8b929a1acea6273fd9c1f87e5764))
+
+- Retry transient provider errors, bound ty's upper version
+  ([#14](https://github.com/RyanSaxe/jiti/pull/14),
+  [`311594b`](https://github.com/RyanSaxe/jiti/commit/311594bd80ab8b929a1acea6273fd9c1f87e5764))
+
+### Code Style
+
+- Blank line after import (ruff-format) ([#14](https://github.com/RyanSaxe/jiti/pull/14),
+  [`311594b`](https://github.com/RyanSaxe/jiti/commit/311594bd80ab8b929a1acea6273fd9c1f87e5764))
+
+
 ## v1.4.0 (2026-06-10)
 
 ### Features
