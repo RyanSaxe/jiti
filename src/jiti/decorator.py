@@ -67,6 +67,7 @@ class _JitiCallable:
                 return self._call_async((instance, *args), kwargs)
             return self._resolve((instance, *args), kwargs)(instance, *args, **kwargs)
 
+        functools.update_wrapper(bound, self._func)  # carry __name__/__doc__/__qualname__
         if self._is_async:
             inspect.markcoroutinefunction(bound)
         return bound
@@ -190,14 +191,26 @@ class _Jiti:
             if not isinstance(test, types.FunctionType):
                 raise JitiError("jiti.required_for can only decorate a plain test function.")
             gate = gate_for(test, jiti_callable)
-            if not any(existing.name == gate.name for existing in jiti_callable._gates):
-                gate_owner = jiti_callable
-                gate_owner._gates.append(gate)  # idempotent: discovery may import a test file twice
+            # idempotent: discovery may import a test file twice. Identity is (module,
+            # qualname) so two same-named tests in different files don't silently collide
+            # — they register as distinct gates.
+            ident = _gate_identity(gate)
+            if not any(_gate_identity(existing) == ident for existing in jiti_callable._gates):
+                jiti_callable._gates.append(gate)
             if gate.kind == "human":
                 return test
             return cast(F, _jiti_test_runner(test, jiti_callable))
 
         return register
+
+
+def _gate_identity(gate: Gate) -> tuple[str, str]:
+    """Stable identity for dedupe: (test module, test qualname). Stub gates have no test
+    function (jiti-tests pre-generation), so fall back to (name, '') for those."""
+    test = gate.test
+    if test is None:
+        return (gate.name, "")
+    return (getattr(test, "__module__", ""), getattr(test, "__qualname__", gate.name))
 
 
 def _unwrap_to_jiti_callable(target: object) -> _JitiCallable | None:
