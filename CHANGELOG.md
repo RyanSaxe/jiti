@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.0 (2026-06-10)
+
+### Features
+
+- Add frozen mode for production deployments ([#11](https://github.com/RyanSaxe/jiti/pull/11),
+  [`cf6b97c`](https://github.com/RyanSaxe/jiti/commit/cf6b97c7f20dd31a7e98e5db4e963e4c12bdcb5c))
+
+
 ## v1.3.4 (2026-06-10)
 
 ### Bug Fixes
