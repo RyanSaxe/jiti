@@ -30,6 +30,7 @@ def slugify(text: str) -> str: ...
 | `max_refactor`      | `1`                      | How many refactor passes to attempt before settling.                    |
 | `test_paths`        | `None`                   | Where to find `@jiti.required_for` gates. `None` scans the working tree; a tuple narrows it; `()` disables discovery. |
 | `execution_timeout` | `120.0`                  | Max **idle** seconds (no LLM call in flight) per in-process execution — a test, gate, or tool experiment. Cascaded generation resets the clock on every model call; only a hung candidate trips it. |
+| `frozen`            | `False`                  | Refuse to generate. A cache miss raises `FrozenError` instead of calling the LLM. See [Frozen mode](#frozen-mode). |
 | `completion`        | LiteLLM `completion`     | LiteLLM-compatible completion callable; tests can inject a fake.        |
 
 ## Models
@@ -68,6 +69,7 @@ GEMINI_API_KEY=... JITI_MODEL=gemini/<model-id> python your_script.py
 | `JITI_LOG`          | Log level — see [Logging](#logging). Unset means silent.                 |
 | `JITI_STYLE`        | Path to a local style guide; overrides the packaged default.             |
 | `JITI_TESTS`        | Path to a local test guide; overrides the packaged default.              |
+| `JITI_FROZEN`       | When truthy (`1`/`true`/`yes`/`on`), the default engine refuses to generate. See [Frozen mode](#frozen-mode). |
 
 ## Logging
 
@@ -213,6 +215,23 @@ pipeline (and meet `quality_threshold`) wins.
 When generating a test against a not-yet-implemented target, validation runs lint and
 type-check only — no execution.
 
+## Frozen mode
+
+Frozen mode makes cache misses loud. With `Engine(frozen=True)` — or with
+`JITI_FROZEN=1` for the default engine — any resolution that would trigger
+generation (`GENERATE` or `REGENERATE`) raises `FrozenError` instead of calling
+the LLM. Cached sections still run as plain dispatch.
+
+The intended workflow:
+
+1. **Develop unfrozen.** Generation runs, `.jiti/` fills up.
+2. **Commit `.jiti/`** (or `jiti merge` it into source).
+3. **Deploy with `JITI_FROZEN=1`.** Production runs only committed code — no key,
+   no surprise latency, no surprise spend. A drift between source and `.jiti/`
+   surfaces as a `FrozenError` on the call instead of a silent LLM round-trip.
+
+`FrozenError` is a `JitiError`; catch it for a soft-fail path if you prefer.
+
 ## Concurrency
 
 - **Running** generated code is fully safe — it's plain dispatch.
@@ -232,6 +251,7 @@ type-check only — no execution.
 | `GenerationError`      | The agent gave up — exceeded turns, or every candidate failed validation. |
 | `GenerationCycleError` | A cascade tried to re-enter generation for a section already in progress. |
 | `ConflictError`        | A hand-edited section's spec changed — see the lifecycle above.      |
+| `FrozenError`          | Frozen mode is on and the section needs generating or regenerating.  |
 | `RealBodyError`        | A `@jiti` function has a non-stub body.                              |
 
 ## Test discovery

@@ -159,6 +159,10 @@ After `merge --all`, you have plain Python, no jiti dependency required. See
   regenerates; if you'd hand-edited that section, it surfaces a conflict instead.
 - **git is yours.** jiti only writes files into `.jiti/`. Commit it (so production runs
   cached code with no key) or gitignore it. jiti never runs git.
+- **Freeze for production.** Set `JITI_FROZEN=1` (or pass `Engine(frozen=True)`) to make
+  any cache miss raise `FrozenError` instead of silently calling the LLM. Generate in
+  development, commit `.jiti/`, then deploy with the freeze on — no key, no surprise
+  latency, no surprise cost.
 - **Concurrency.** Running generated code is fully safe — it's plain dispatch. Within a
   process, concurrent first calls to the same function share one generation (the losers
   wait, then run the winner's code). Across *processes* there is no locking — warm the

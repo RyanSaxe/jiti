@@ -10,6 +10,7 @@ from pathlib import Path
 from jiti.agent.engine import Engine
 from jiti.core.errors import (
     ConflictError,
+    FrozenError,
     GenerationCycleError,
     GenerationError,
     JitiError,
@@ -24,6 +25,7 @@ configure()
 __all__ = [
     "ConflictError",
     "Engine",
+    "FrozenError",
     "GenerationCycleError",
     "GenerationError",
     "JitiError",
