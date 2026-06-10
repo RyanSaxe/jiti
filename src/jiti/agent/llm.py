@@ -12,6 +12,7 @@ from litellm import completion_cost, get_llm_provider
 
 from jiti.core import heartbeat
 
+
 @dataclass(frozen=True)
 class TextBlock:
     text: str
