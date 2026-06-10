@@ -53,6 +53,9 @@ docs = [
 
 [tool.uv]
 exclude-newer = "7 days"
+# docs tooling is part of the dev environment: ty type-checks scripts/gen_api_pages.py
+# (which imports mkdocs_gen_files), so every sync needs the docs group present.
+default-groups = ["dev", "docs"]
 
 [tool.ruff]
 target-version = "py313"
