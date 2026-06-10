@@ -7,9 +7,9 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths: [docs/**, mkdocs.yml, src/**, .github/workflows/docs.yml]
+    paths: [docs/**, mkdocs.yml, src/**, scripts/gen_api_pages.py, .github/workflows/docs.yml]
   pull_request:
-    paths: [docs/**, mkdocs.yml, .github/workflows/docs.yml]
+    paths: [docs/**, mkdocs.yml, scripts/gen_api_pages.py, .github/workflows/docs.yml]
 
 permissions:
   contents: read

@@ -4,6 +4,10 @@ The public surface, rendered from the source docstrings. The `@jiti` decorator i
 documented in [Concepts](concepts.md) and [Guides](guides.md); everything configurable
 lives on `Engine`.
 
+Beyond this page, **every module** is documented under Internals — generated from source
+at build time, so each type in the signatures below is clickable. Internals are
+documented for transparency, not as a supported extension surface.
+
 ## Engine
 
 ::: jiti.Engine
