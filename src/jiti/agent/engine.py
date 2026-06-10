@@ -15,7 +15,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, TypeGuard
 
-from jiti.agent.llm import Completion, LiteLLMClient, ToolCall, tool_result
+from jiti.agent.llm import Completion, LiteLLMClient, TextBlock, ToolCall, tool_result
 from jiti.agent.prompts import STYLE_GUIDE, SYSTEM_PROMPT, TEST_GUIDE, TEST_MODE_PROMPT
 from jiti.agent.tools import IMPL_TOOLS, TEST_TOOLS, CallContext, dispatch
 from jiti.agent.transcript import Recorder, transcript_path
@@ -248,14 +248,11 @@ def _cached(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
-def _refactor_nudge(quality: int, threshold: int) -> dict[str, Any]:
-    return {
-        "type": "text",
-        "text": (
-            f"That passes, but you rated quality {quality} < {threshold}. Refactor for "
-            "readability, structure, and simplicity while keeping every test green, then resubmit."
-        ),
-    }
+def _refactor_nudge(quality: int, threshold: int) -> TextBlock:
+    return TextBlock(
+        f"That passes, but you rated quality {quality} < {threshold}. Refactor for "
+        "readability, structure, and simplicity while keeping every test green, then resubmit."
+    )
 
 
 def _is_tool_use(block: Any) -> TypeGuard[ToolCall]:
