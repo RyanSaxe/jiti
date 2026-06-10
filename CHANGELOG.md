@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v1.3.4 (2026-06-10)
+
+### Bug Fixes
+
+- Serialize concurrent first calls to a @jiti stub ([#9](https://github.com/RyanSaxe/jiti/pull/9),
+  [`ee8a3eb`](https://github.com/RyanSaxe/jiti/commit/ee8a3ebf076beeec571d6fa7af943d736fbae03c))
+
+- Thread-safe default_engine() singleton init ([#13](https://github.com/RyanSaxe/jiti/pull/13),
+  [`5afe855`](https://github.com/RyanSaxe/jiti/commit/5afe855e49e9805dc2bbef0f1cb9a7e842796f93))
+
+
 ## v1.3.3 (2026-06-10)
 
 ### Bug Fixes
