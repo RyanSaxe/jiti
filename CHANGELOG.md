@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.3.2 (2026-06-10)
+
+### Bug Fixes
+
+- Minor robustness batch ([#12](https://github.com/RyanSaxe/jiti/pull/12),
+  [`c1b5e1f`](https://github.com/RyanSaxe/jiti/commit/c1b5e1f1336f6b7e0574e25a35ea34c14a80c87a))
+
+
 ## v1.3.1 (2026-06-10)
 
 ### Bug Fixes
