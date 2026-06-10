@@ -22,3 +22,6 @@ htmlcov/
 
 # local feature backlog (not part of the published project)
 backlog/
+
+# mkdocs build output (deployed from CI, never committed)
+site/

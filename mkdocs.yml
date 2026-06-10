@@ -1,0 +1,68 @@
+site_name: jiti
+site_description: >-
+  Just In Time Implementation — declare a typed interface and let an LLM write,
+  validate, and cache a real implementation you keep.
+site_url: https://ryansaxe.com/jiti/
+repo_url: https://github.com/RyanSaxe/jiti
+repo_name: RyanSaxe/jiti
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Concepts: concepts.md
+  - Guides: guides.md
+  - Reference: reference.md
+  - API: api.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/RyanSaxe/jiti
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/jiti/
