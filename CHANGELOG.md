@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v1.5.1 (2026-06-12)
+
+### Bug Fixes
+
+- Pre-generation arg validation + in-process store write serialization
+  ([#18](https://github.com/RyanSaxe/jiti/pull/18),
+  [`06ed280`](https://github.com/RyanSaxe/jiti/commit/06ed280824f5a83e784514ce799dafc4c08fb1e8))
+
+### Documentation
+
+- Add MkDocs Material documentation site ([#16](https://github.com/RyanSaxe/jiti/pull/16),
+  [`7bb4f53`](https://github.com/RyanSaxe/jiti/commit/7bb4f53bf459d89f923ad861592d2135c0738b5e))
+
+- Auto-generate an Internals page per module ([#16](https://github.com/RyanSaxe/jiti/pull/16),
+  [`7bb4f53`](https://github.com/RyanSaxe/jiti/commit/7bb4f53bf459d89f923ad861592d2135c0738b5e))
+
+- Correct the site URL and link the README to the docs site
+  ([#17](https://github.com/RyanSaxe/jiti/pull/17),
+  [`e6b036c`](https://github.com/RyanSaxe/jiti/commit/e6b036c9f86b0b21704072bf91e64cc9bd682d23))
+
+- Include docs group in default sync so ty resolves gen_api_pages imports
+  ([#16](https://github.com/RyanSaxe/jiti/pull/16),
+  [`7bb4f53`](https://github.com/RyanSaxe/jiti/commit/7bb4f53bf459d89f923ad861592d2135c0738b5e))
+
+- Polish API rendering — typed signatures, symbol badges, collapsible source
+  ([#16](https://github.com/RyanSaxe/jiti/pull/16),
+  [`7bb4f53`](https://github.com/RyanSaxe/jiti/commit/7bb4f53bf459d89f923ad861592d2135c0738b5e))
+
+
 ## v1.5.0 (2026-06-10)
 
 ### Features
