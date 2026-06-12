@@ -15,9 +15,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,15 @@ class JitiStore:
     """Reads and writes the `.jiti/` companion mirror rooted at `root`."""
 
     root: Path
+    # Serializes the read→render→write of a companion file: two declarations in one module
+    # generating on different threads would otherwise race the read-modify-write in
+    # `_upsert` and silently drop a section. Deliberately a plain Lock, not an RLock — the
+    # critical section can never re-enter the store (a cascade commits its own section
+    # before its caller reaches `write`), so a deadlock here means that invariant broke
+    # and should surface, not be silently permitted.
+    _write_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     def impl_path(self, declaration: Declaration) -> Path:
         return self.root / module_relpath(declaration.module)
@@ -136,14 +146,17 @@ class JitiStore:
         return impl
 
     def _upsert(self, path: Path, section: Section, imports: str) -> None:
-        try:
-            existing_imports, sections = parse_file(path.read_text())
-        except FileNotFoundError:
-            existing_imports, sections = "", {}
-        sections[section.key] = section
-        combined = "\n".join(part for part in (existing_imports, imports) if part)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, render_file(combined, sections), _clean_imports)
+        # The lock guards ONLY this read→render→write. It must never span generation or
+        # validation (both can cascade back into the store) — widening it would deadlock.
+        with self._write_lock:
+            try:
+                existing_imports, sections = parse_file(path.read_text())
+            except FileNotFoundError:
+                existing_imports, sections = "", {}
+            sections[section.key] = section
+            combined = "\n".join(part for part in (existing_imports, imports) if part)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(path, render_file(combined, sections), _clean_imports)
 
     def load(self, declaration: Declaration) -> Callable[..., Any]:
         """Compile the companion fresh (no bytecode cache) and return the declared function."""
