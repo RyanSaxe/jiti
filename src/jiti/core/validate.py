@@ -19,8 +19,9 @@ import subprocess
 import sys
 import threading
 import traceback
+import types
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -28,7 +29,7 @@ from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import Protocol, cast
 
-from pydantic import ConfigDict, validate_call
+from pydantic import ConfigDict, PydanticUserError, validate_call
 
 from jiti.core import heartbeat
 from jiti.core.declaration import Gate, UsedSymbol
@@ -39,6 +40,48 @@ CONTRACT = validate_call(
     config=ConfigDict(strict=True, arbitrary_types_allowed=True),
     validate_return=True,
 )
+
+# The same contract as CONTRACT minus the return check, for validating a call's arguments
+# against the stub itself — so pre-generation rejection and dispatch rejection are one
+# semantics, enforced at two times.
+ARG_CONTRACT = validate_call(
+    config=ConfigDict(strict=True, arbitrary_types_allowed=True),
+    validate_return=False,
+)
+
+
+def validate_args(
+    stub: types.FunctionType, args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    """Reject arguments the runtime contract would reject — before any generation runs.
+
+    Without this, a malformed call becomes the exemplar the agent inspects: generation
+    runs, gets committed, and the `ValidationError` only fires at dispatch. Failing here
+    means a cascading caller gets contract feedback in milliseconds instead of after a
+    full (and polluted) generation.
+
+    Calling the stub is safe by construction — `analyze_body` guarantees at decoration
+    time that the body is `...`, `pass`, or `raise NotImplementedError`.
+    """
+    try:
+        checked = ARG_CONTRACT(stub)
+    except (PydanticUserError, NameError):
+        # The stub's annotations can't build a schema (e.g. `from __future__ import
+        # annotations` plus locally-scoped types). The dispatch-time CONTRACT on the
+        # loaded impl — whose annotations are live objects — still enforces the contract.
+        return
+    try:
+        result = checked(*args, **kwargs)
+    except NotImplementedError:
+        return
+    if inspect.iscoroutine(result):
+        # pydantic wraps async functions in an async wrapper, so argument validation may
+        # only run once the coroutine is driven. The stub body has no awaits, so one step
+        # always completes: StopIteration (valid), NotImplementedError (stub form), or
+        # ValidationError (bad args — propagates).
+        with suppress(StopIteration, NotImplementedError):
+            result.send(None)
+
 
 # Invoked through the interpreter so a host app without the venv's bin on PATH still finds them.
 RUFF = (sys.executable, "-m", "ruff")

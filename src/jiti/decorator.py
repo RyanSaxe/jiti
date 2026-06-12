@@ -29,7 +29,7 @@ from jiti.core.declaration import (
     used_symbol,
 )
 from jiti.core.errors import JitiError
-from jiti.core.validate import CONTRACT, run_test_callable
+from jiti.core.validate import CONTRACT, run_test_callable, validate_args
 
 
 class _JitiCallable:
@@ -100,6 +100,10 @@ class _JitiCallable:
         if self._impl is None:
             with self._resolve_lock:
                 if self._impl is None:
+                    # Reject contract-violating args before the engine can start a
+                    # generation seeded by them — same strict semantics as CONTRACT below,
+                    # just enforced before any spend instead of at dispatch.
+                    validate_args(self._func, args, kwargs)
                     engine = self._engine or default_engine()
                     engine.discover()  # import test modules so gates are registered first
                     self._impl = CONTRACT(
