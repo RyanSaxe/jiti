@@ -1,6 +1,7 @@
 """The store's three-way state (untouched / edited / conflict) is the safety core."""
 
 import inspect
+import threading
 
 import pytest
 from conftest import make_declaration
@@ -44,6 +45,34 @@ def test_companion_file_is_valid_python(store):
     store.write(declaration, IMPL, TESTS)
 
     compile(store.impl_path(declaration).read_text(), "<companion>", "exec")
+
+
+def test_concurrent_writes_to_one_companion_keep_every_section(store):
+    """Two declarations in one module committing from different threads must not race the
+    read-modify-write and drop each other's sections. (Without the store's write lock this
+    loses sections almost every run — the ruff post-process keeps the window wide open.)"""
+    declarations = [make_declaration(qualname=f"fn{i}", def_line=f"def fn{i}():") for i in range(8)]
+    barrier = threading.Barrier(len(declarations))
+    errors: list[BaseException] = []
+
+    def write(declaration) -> None:
+        try:
+            barrier.wait()
+            body = f"def {declaration.name}():\n    return '{declaration.name}'"
+            store.write(declaration, body, f"def test_{declaration.name}():\n    pass")
+        except BaseException as error:  # surfaced by the assert below
+            errors.append(error)
+
+    threads = [threading.Thread(target=write, args=(d,)) for d in declarations]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    for declaration in declarations:
+        assert store.read_section(declaration) is not None
+        assert store.read_test_section(declaration) is not None
 
 
 def test_resolve_missing_section_says_generate(store):

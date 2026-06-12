@@ -8,6 +8,7 @@ Note on `# ty: ignore[invalid-argument-type]`: several tests deliberately pass a
 that violate the function's static type — that's the *point*. We suppress ty only there.
 """
 
+import asyncio
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,3 +120,97 @@ def test_strict_mode_is_in_effect_on_jiti_wrapped_functions(tmp_path):
     assert wrapped(2) == 3
     with pytest.raises(ValidationError):
         wrapped("5")  # ty: ignore[invalid-argument-type]
+
+
+# ---------- pre-generation: contract-violating args never reach the agent ----------
+
+
+def test_bad_arg_type_fails_before_any_generation(tmp_path):
+    """An empty script proves it: any LLM call would IndexError, and calls stays 0."""
+    client = ScriptedClient([])
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
+    wrapped = jiti(engine=engine)(slugify)
+
+    with pytest.raises(ValidationError):
+        wrapped(123)  # ty: ignore[invalid-argument-type]
+    assert client.calls == 0
+
+
+def test_bad_arity_fails_before_any_generation(tmp_path):
+    client = ScriptedClient([])
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
+    wrapped = jiti(engine=engine)(slugify)
+
+    with pytest.raises(ValidationError):
+        wrapped()  # ty: ignore[missing-argument]
+    assert client.calls == 0
+
+
+def raises_form_stub(text: str) -> str:
+    """Uppercase the text."""
+    raise NotImplementedError
+
+
+def test_raise_not_implemented_stub_form_still_generates(tmp_path):
+    body = "return text.upper()"
+    tests = "def test_u():\n    assert raises_form_stub('hi') == 'HI'"
+    engine = _engine(tmp_path, submit("raises_form_stub", body, tests))
+    wrapped = jiti(engine=engine)(raises_form_stub)
+
+    assert wrapped("hi") == "HI"
+
+
+def test_async_bad_args_fail_before_any_generation(tmp_path):
+    client = ScriptedClient([])
+    engine = Engine(completion=client, store=JitiStore(tmp_path / ".jiti"))
+
+    @jiti(engine=engine)
+    async def double(x: int) -> int:
+        """Return x * 2."""
+        ...
+
+    with pytest.raises(ValidationError):
+        asyncio.run(double("bad"))  # ty: ignore[invalid-argument-type]
+    assert client.calls == 0
+
+
+# ---------- cascade: a bad call site gets contract feedback, not a polluted callee ----------
+
+
+_CASCADE_CLIENT = ScriptedClient([])
+_CASCADE_ENGINE = Engine(
+    completion=_CASCADE_CLIENT, store=JitiStore(Path(tempfile.mkdtemp()) / ".jiti")
+)
+
+
+@jiti(engine=_CASCADE_ENGINE)
+def cascade_callee(text: str) -> str:
+    """Echo the text."""
+    ...
+
+
+@jiti(engine=_CASCADE_ENGINE)
+def cascade_upstream(value: int) -> str:
+    """Render the value via cascade_callee."""
+    ...
+
+
+def test_cascading_caller_gets_validation_feedback_without_generating_the_callee():
+    """The upstream's first candidate calls the callee with a contract-violating arg
+    (typed `Any` so it slips past ty and only the runtime contract can catch it). The
+    callee must not generate from that call; the upstream agent must see the
+    ValidationError as feedback and correct its call site."""
+    helpers = f"from typing import Any\n\nfrom {__name__} import cascade_callee"
+    bad = "data: Any = 123\nreturn cascade_callee(data)"
+    good = "return cascade_callee(str(value))"
+    tests = "def test_u():\n    assert cascade_upstream(7) == '7'"
+    callee_tests = "def test_e():\n    assert cascade_callee('a') == 'a'"
+    _CASCADE_CLIENT.script = [
+        submit("cascade_upstream", bad, tests, helpers=helpers),
+        submit("cascade_upstream", good, tests, helpers=f"from {__name__} import cascade_callee"),
+        submit("cascade_callee", "return text", callee_tests),
+    ]
+
+    assert cascade_upstream(7) == "7"
+    assert _CASCADE_CLIENT.calls == 3
+    assert "ValidationError" in str(_CASCADE_CLIENT.requests[1])
